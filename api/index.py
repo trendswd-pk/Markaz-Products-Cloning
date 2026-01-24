@@ -1,5 +1,4 @@
 def app(request):
-    """Vercel serverless function handler"""
     html = """<!DOCTYPE html>
 <html>
 <head>
@@ -39,6 +38,8 @@ def app(request):
     
     return {
         'statusCode': 200,
-        'headers': {'Content-Type': 'text/html; charset=utf-8'},
+        'headers': {
+            'Content-Type': 'text/html; charset=utf-8'
+        },
         'body': html
     }
