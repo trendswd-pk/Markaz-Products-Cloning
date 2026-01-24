@@ -1,16 +1,10 @@
 {
   "version": 2,
   "buildCommand": "pip install -r requirements.txt && playwright install chromium && playwright install-deps chromium",
-  "builds": [
-    {
-      "src": "app.py",
-      "use": "@vercel/python"
-    }
-  ],
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "app.py"
+      "dest": "api/app.py"
     }
   ],
   "env": {
@@ -21,7 +15,7 @@
     "STREAMLIT_SERVER_HEADLESS": "true"
   },
   "functions": {
-    "app.py": {
+    "api/app.py": {
       "maxDuration": 300,
       "memory": 3008
     }
