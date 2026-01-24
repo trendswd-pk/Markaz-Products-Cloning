@@ -1,24 +1,13 @@
 """
-Vercel serverless function handler for Streamlit app
+Vercel serverless function handler - Lightweight version
+Note: Full Streamlit app cannot run on Vercel due to size limitations.
+This is a redirect/info page pointing to Streamlit Cloud deployment.
 """
-import sys
-import os
-
-# Add parent directory to path
-parent_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, parent_dir)
-
 def handler(request):
     """Vercel serverless function handler"""
     try:
-        # Import streamlit runtime
-        import streamlit.runtime.scriptrunner.script_runner as script_runner
-        from streamlit.web.server import Server
-        from streamlit.runtime.state import SessionState
-        
-        # Return a simple HTML response
-        # Note: Full Streamlit requires persistent WebSocket connections
-        # which are not available in Vercel serverless functions
+        # Return a simple HTML response without importing Streamlit
+        # This keeps the function size under 250 MB limit
         html_content = """
         <!DOCTYPE html>
         <html>
