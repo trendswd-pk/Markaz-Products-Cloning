@@ -2,8 +2,8 @@
 Vercel serverless function handler
 """
 
-def handler(request):
-    """Vercel serverless function handler"""
+def app(request):
+    """Vercel serverless function handler - Main entry point"""
     html_content = """
     <!DOCTYPE html>
     <html>
