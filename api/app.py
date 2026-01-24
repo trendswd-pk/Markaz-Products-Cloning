@@ -3,8 +3,9 @@ Vercel serverless function handler - Lightweight version
 Note: Full Streamlit app cannot run on Vercel due to size limitations.
 This is a redirect/info page pointing to Streamlit Cloud deployment.
 """
-def handler(request):
-    """Vercel serverless function handler"""
+
+def app(request):
+    """Vercel serverless function handler - Main entry point"""
     try:
         # Return a simple HTML response without importing Streamlit
         # This keeps the function size under 250 MB limit
@@ -35,6 +36,13 @@ def handler(request):
                     padding: 15px;
                     border-radius: 5px;
                     margin: 20px 0;
+                }
+                a {
+                    color: #1f77b4;
+                    text-decoration: none;
+                }
+                a:hover {
+                    text-decoration: underline;
                 }
             </style>
         </head>
@@ -77,7 +85,3 @@ def handler(request):
             },
             'body': f'Error: {str(e)}'
         }
-
-# Vercel expects this function
-def app(request):
-    return handler(request)

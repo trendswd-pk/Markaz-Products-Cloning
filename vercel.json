@@ -3,16 +3,12 @@
   "routes": [
     {
       "src": "/(.*)",
-      "dest": "api/app.py"
+      "dest": "/api/app.py"
     }
   ],
-  "env": {
-    "PLAYWRIGHT_BROWSERS_PATH": "0"
-  },
   "functions": {
     "api/app.py": {
       "maxDuration": 300
     }
-  },
-  "regions": ["iad1"]
+  }
 }
