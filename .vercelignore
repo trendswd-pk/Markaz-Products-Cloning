@@ -12,3 +12,5 @@ build/
 .env
 .venv
 *.log
+requirements-full.txt
+app.py
