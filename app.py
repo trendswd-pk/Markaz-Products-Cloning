@@ -7,8 +7,9 @@ import subprocess
 from urllib.parse import urljoin
 from html import escape
 
-# Note: Playwright browser installation is handled by Streamlit Cloud during build
-# No need to install at runtime - Streamlit Cloud will install browsers automatically
+# Playwright Browser Installation: Install chromium browser if missing
+# This ensures browser is available when app runs on Streamlit Cloud
+os.system('playwright install chromium')
 
 # Page configuration
 st.set_page_config(
