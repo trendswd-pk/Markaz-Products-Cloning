@@ -5,6 +5,7 @@ Optimized for Playwright scraping with memory-efficient browser flags
 
 import json
 import re
+import os
 from urllib.parse import urljoin, parse_qs
 from html import escape
 
@@ -100,24 +101,49 @@ def slugify(text):
     text = re.sub(r'-+', '-', text)
     return text.strip('-')
 
+def launch_browser_for_serverless(playwright):
+    """
+    Helper function to launch browser optimized for serverless environments (Vercel)
+    Detects Vercel environment and uses appropriate browser configuration
+    """
+    # Check if running on Vercel
+    is_vercel = os.getenv('VERCEL') == '1' or os.getenv('VERCEL_ENV') is not None
+    
+    # Serverless-optimized browser launch arguments
+    launch_args = [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--single-process',
+        '--disable-gpu',
+        '--disable-software-rasterizer',
+        '--disable-extensions',
+        '--disable-background-networking',
+        '--disable-background-timer-throttling',
+        '--disable-backgrounding-occluded-windows',
+        '--disable-renderer-backgrounding',
+        '--disable-features=TranslateUI',
+        '--disable-ipc-flooding-protection'
+    ]
+    
+    # Launch browser with serverless-optimized settings
+    browser = playwright.chromium.launch(
+        headless=True,  # Always headless in serverless
+        args=launch_args
+    )
+    
+    return browser
+
 
 def scrape_markaz_product(url):
     """Scrape product data from Markaz product URL using Playwright - Optimized for Vercel"""
+    browser = None
     try:
         from playwright.sync_api import sync_playwright
         
         with sync_playwright() as p:
-            # Launch browser with Vercel-optimized flags to reduce memory footprint
-            browser = p.chromium.launch(
-                headless=True,  # Hardcoded headless mode
-                args=[
-                    '--no-sandbox',
-                    '--disable-setuid-sandbox',
-                    '--disable-dev-shm-usage',
-                    '--single-process',
-                    '--disable-gpu'
-                ]
-            )
+            # Use helper function to launch browser optimized for serverless
+            browser = launch_browser_for_serverless(p)
             page = browser.new_page()
             
             # Navigate to the page
@@ -188,24 +214,24 @@ def scrape_markaz_product(url):
             except Exception as e:
                 pass
             
-            # Extract breadcrumb navigation - STRICT: ONLY <a> tags with href starting with "/explore"
-            # Target: 'Marketplace', 'Beauty&Fashion', 'Cosmetics', 'Personal Care'
-            # Ignore: Anything that is not an <a> tag to avoid 'Followers' or 'Product counts'
+            # Extract breadcrumb navigation - STRICT: Target ONLY links main a[href*="/explore"]
+            # Scraper ko kahein ke wo sirf main a[href*="/explore"] wale links pakre
+            # Is se Marketplace / Men / Track Suit wagera sahi capture honge
+            # Followers aur Products count wala fuzool text Tags mein nahi aana chahiye
             breadcrumb_items = []
             try:
-                # STRICT SELECTOR: Only get <a> tags from main that have href starting with "/explore"
-                # This ensures we ONLY capture breadcrumb links, not any other text
-                breadcrumb_links = page.locator('main a[href^="/explore"]').all()
+                # STRICT SELECTOR: Only get <a> tags from main that have href containing "/explore"
+                breadcrumb_links = page.locator('main a[href*="/explore"]').all()
                 
                 if breadcrumb_links:
                     # Extract text from each link (ONLY from <a> tags)
                     for link in breadcrumb_links:
                         try:
-                            # Get href to verify it starts with "/explore"
+                            # Get href to verify it contains "/explore"
                             href = link.get_attribute('href') or ''
                             
-                            # STRICT: Only process if href starts with "/explore"
-                            if not href.startswith('/explore'):
+                            # STRICT: Only process if href contains "/explore"
+                            if '/explore' not in href:
                                 continue
                             
                             # Get text content from the <a> tag ONLY
@@ -254,6 +280,24 @@ def scrape_markaz_product(url):
                         except Exception as e:
                             # Skip this link if any error occurs
                             continue
+                
+                # Clean breadcrumb items: Split by / and clean each item
+                # Is se Marketplace / Men / Track Suit wagera sahi capture honge
+                if breadcrumb_items:
+                    cleaned_items = []
+                    for item in breadcrumb_items:
+                        # Split by / if item contains /
+                        if '/' in item:
+                            parts = re.split(r'\s*/\s*', item)
+                            for part in parts:
+                                part = part.strip()
+                                if part and part not in cleaned_items:
+                                    cleaned_items.append(part)
+                        else:
+                            if item not in cleaned_items:
+                                cleaned_items.append(item)
+                    breadcrumb_items = cleaned_items
+                
             except Exception as e:
                 pass
             
@@ -412,9 +456,8 @@ def scrape_markaz_product(url):
             except:
                 pass
             
-            browser.close()
-            
-            return {
+            # Prepare return data
+            result = {
                 'title': title,
                 'description': description,
                 'price': price,
@@ -426,6 +469,8 @@ def scrape_markaz_product(url):
                 'url': url,
                 'status': 'success'
             }
+            
+            return result
             
     except Exception as e:
         return {
@@ -440,3 +485,10 @@ def scrape_markaz_product(url):
             'url': url,
             'status': f'Error: {str(e)}'
         }
+    finally:
+        # Memory Management: Force browser.close() in finally block to ensure memory is released immediately
+        if browser:
+            try:
+                browser.close()
+            except:
+                pass
