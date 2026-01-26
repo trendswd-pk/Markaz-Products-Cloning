@@ -7,16 +7,8 @@ import subprocess
 from urllib.parse import urljoin
 from html import escape
 
-# Playwright Browser Fix: Install chromium browser
-# This ensures browser is available when app runs
-try:
-    subprocess.run(['playwright', 'install', 'chromium'], 
-                  capture_output=True, 
-                  timeout=300,
-                  check=False)
-except Exception:
-    # If installation fails, continue - browser might already be installed
-    pass
+# Note: Playwright browser installation is handled by Streamlit Cloud during build
+# No need to install at runtime - Streamlit Cloud will install browsers automatically
 
 # Page configuration
 st.set_page_config(
@@ -142,18 +134,18 @@ def convert_description_to_html(description):
 
 def launch_browser_for_serverless(playwright):
     """
-    Helper function to launch browser optimized for serverless environments (Vercel)
-    Detects Vercel environment and uses appropriate browser configuration
+    Helper function to launch browser optimized for serverless environments (Vercel/Streamlit Cloud)
+    Detects environment and uses appropriate browser configuration
     """
-    # Check if running on Vercel
+    # Check if running on Vercel or Streamlit Cloud
     is_vercel = os.getenv('VERCEL') == '1' or os.getenv('VERCEL_ENV') is not None
+    is_streamlit_cloud = os.getenv('STREAMLIT_CLOUD') is not None or 'streamlit' in os.getenv('HOME', '').lower()
     
-    # Serverless-optimized browser launch arguments
+    # Serverless-optimized browser launch arguments (works for both Vercel and Streamlit Cloud)
     launch_args = [
         '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
-        '--single-process',
         '--disable-gpu',
         '--disable-software-rasterizer',
         '--disable-extensions',
@@ -164,6 +156,10 @@ def launch_browser_for_serverless(playwright):
         '--disable-features=TranslateUI',
         '--disable-ipc-flooding-protection'
     ]
+    
+    # Only use --single-process on Vercel (can cause issues on Streamlit Cloud)
+    if is_vercel:
+        launch_args.append('--single-process')
     
     # Launch browser with serverless-optimized settings
     browser = playwright.chromium.launch(

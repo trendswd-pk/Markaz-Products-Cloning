@@ -1,6 +1,6 @@
 # Requirements for Streamlit Community Cloud
 # All dependencies used in app.py
 
-streamlit>=1.30.0
-playwright>=1.40.0
-pandas>=2.0.0
+streamlit>=1.30.0,<2.0.0
+playwright>=1.40.0,<2.0.0
+pandas>=2.0.0,<3.0.0
