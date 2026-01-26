@@ -21,6 +21,8 @@ st.set_page_config(
 # Initialize session state
 if 'products' not in st.session_state:
     st.session_state.products = []
+if 'fetched_product_data' not in st.session_state:
+    st.session_state.fetched_product_data = None
 
 def slugify(text):
     """Convert text to URL-friendly handle"""
@@ -672,16 +674,17 @@ def create_shopify_row(product, variant_value="", image_url="", image_position="
         # Store original price in Cost per item (only in first variant row)
         cost_per_item = f"{original_price:.2f}" if is_first_variant else ""
         
-        # Calculate Variant Price based on original price (apply to all variants)
-        if original_price < 2000:
-            variant_price = original_price + 500
-        else:
-            variant_price = original_price + 1000
+        # Get price adjustments from product data (user input values)
+        variant_price_adjustment = float(product.get('variant_price_adjustment', 0))
+        compare_at_price_adjustment = float(product.get('compare_at_price_adjustment', 0))
+        
+        # Calculate Variant Price: Original Price + User Input Adjustment
+        variant_price = original_price + variant_price_adjustment
         
         variant_price_formatted = f"{variant_price:.2f}"
         
-        # Calculate Compare At Price: Variant Price + 1500
-        compare_at_price = variant_price + 1500
+        # Calculate Compare At Price: Original Price + User Input Adjustment
+        compare_at_price = original_price + compare_at_price_adjustment
         compare_at_price_formatted = f"{compare_at_price:.2f}"
     except:
         cost_per_item = "0.00" if is_first_variant else ""
@@ -876,23 +879,99 @@ def main():
         key="product_url_input"
     )
     
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        add_button = st.button("Add to List", type="primary", use_container_width=True)
+    # Fetch Product Data Button
+    fetch_button = st.button("📥 Fetch Product Data", type="primary", use_container_width=True)
     
-    if add_button:
+    if fetch_button:
         if url_input:
             with st.spinner("Scraping product data... This may take a few seconds."):
                 product_data = scrape_markaz_product(url_input)
                 
                 if product_data['status'] == 'success':
-                    st.session_state.products.append(product_data)
-                    st.success(f"✅ Added: {product_data['title']}")
+                    st.session_state.fetched_product_data = product_data
+                    st.success(f"✅ Product data fetched successfully!")
                     st.rerun()
                 else:
                     st.error(f"❌ Failed to scrape: {product_data['status']}")
+                    st.session_state.fetched_product_data = None
         else:
             st.warning("Please enter a product URL")
+    
+    # Show fetched product data with price input boxes
+    if st.session_state.fetched_product_data:
+        product_data = st.session_state.fetched_product_data
+        
+        st.divider()
+        st.subheader("📦 Fetched Product Details")
+        
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            st.write(f"**Title:** {product_data['title']}")
+            if product_data.get('base_sku'):
+                st.write(f"**Base SKU:** {product_data['base_sku']}")
+            if product_data.get('variants') and len(product_data['variants']) > 0:
+                variants_display = ', '.join(product_data['variants'])
+                st.write(f"**{product_data.get('option1_name', 'Variants')}:** {variants_display}")
+            st.write(f"**Fetched Price:** Rs. {product_data['price']}")
+        
+        with col2:
+            if product_data.get('image_urls'):
+                st.image(product_data['image_urls'][0], width=200, caption="Product Image")
+        
+        st.divider()
+        st.subheader("💰 Set Pricing")
+        
+        # Show fetched price
+        fetched_price = float(product_data.get('price', 0))
+        st.info(f"**Actual Fetched Price:** Rs. {fetched_price:,.2f}")
+        
+        # Price adjustment input boxes
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            variant_adjustment = st.number_input(
+                "Variant Price Adjustment",
+                value=0.0,
+                step=100.0,
+                help="Enter the amount to add to fetched price for Variant Price. Final Variant Price = Fetched Price + This Value",
+                key="variant_price_adjustment"
+            )
+            final_variant_price = fetched_price + variant_adjustment
+            st.write(f"**Final Variant Price:** Rs. {final_variant_price:,.2f}")
+        
+        with col2:
+            compare_at_adjustment = st.number_input(
+                "Compare At Price Adjustment",
+                value=0.0,
+                step=100.0,
+                help="Enter the amount to add to fetched price for Compare At Price. Final Compare At Price = Fetched Price + This Value",
+                key="compare_at_price_adjustment"
+            )
+            final_compare_at_price = fetched_price + compare_at_adjustment
+            st.write(f"**Final Compare At Price:** Rs. {final_compare_at_price:,.2f}")
+        
+        # Add to List button
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            add_to_list_button = st.button("✅ Add to List", type="primary", use_container_width=True)
+        with col2:
+            clear_button = st.button("❌ Clear", use_container_width=True)
+        
+        if add_to_list_button:
+            # Store price adjustments in product data
+            product_data['variant_price_adjustment'] = variant_adjustment
+            product_data['compare_at_price_adjustment'] = compare_at_adjustment
+            
+            # Add to products list
+            st.session_state.products.append(product_data)
+            st.session_state.fetched_product_data = None
+            st.success(f"✅ Added to list: {product_data['title']}")
+            st.rerun()
+        
+        if clear_button:
+            st.session_state.fetched_product_data = None
+            st.rerun()
     
     st.divider()
     
