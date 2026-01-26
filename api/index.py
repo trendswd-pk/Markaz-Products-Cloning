@@ -188,47 +188,71 @@ def scrape_markaz_product(url):
             except Exception as e:
                 pass
             
-            # Extract breadcrumb navigation - STRICT: Only use main a[href*="/explore"] links
+            # Extract breadcrumb navigation - STRICT: ONLY <a> tags with href starting with "/explore"
+            # Target: 'Marketplace', 'Beauty&Fashion', 'Cosmetics', 'Personal Care'
+            # Ignore: Anything that is not an <a> tag to avoid 'Followers' or 'Product counts'
             breadcrumb_items = []
             try:
-                # STRICT SELECTOR: Only get links from main that have href containing "/explore"
-                breadcrumb_links = page.locator('main a[href*="/explore"]').all()
+                # STRICT SELECTOR: Only get <a> tags from main that have href starting with "/explore"
+                # This ensures we ONLY capture breadcrumb links, not any other text
+                breadcrumb_links = page.locator('main a[href^="/explore"]').all()
                 
                 if breadcrumb_links:
+                    # Extract text from each link (ONLY from <a> tags)
                     for link in breadcrumb_links:
                         try:
+                            # Get href to verify it starts with "/explore"
+                            href = link.get_attribute('href') or ''
+                            
+                            # STRICT: Only process if href starts with "/explore"
+                            if not href.startswith('/explore'):
+                                continue
+                            
+                            # Get text content from the <a> tag ONLY
                             link_text = link.inner_text().strip()
-                            if link_text:
+                            
+                            # Skip if empty
+                            if not link_text:
+                                continue
+                            
+                            # Stop at product title - if this link text matches title, stop collecting
+                            if title:
+                                title_lower = title.lower()
                                 link_lower = link_text.lower()
-                                # Block list: Skip if contains these terms
-                                block_terms = ['followers', 'products', 'rs.', 'add to cart', 'cart']
-                                should_skip = False
-                                
-                                for term in block_terms:
-                                    if term in link_lower:
-                                        should_skip = True
-                                        break
-                                
-                                # Skip product/follower counts and prices
-                                if re.search(r'\d+\s*Products?', link_text, re.IGNORECASE):
-                                    should_skip = True
-                                if re.search(r'\d+[KkMm]?\s*Followers?', link_text, re.IGNORECASE):
-                                    should_skip = True
-                                if re.search(r'Rs\.\s*\d+', link_text, re.IGNORECASE):
-                                    should_skip = True
-                                
-                                # Only keep if it contains letters
-                                if not re.search(r'[a-zA-Z]', link_text):
-                                    should_skip = True
-                                
-                                # Stop at product title
-                                if title and (title.lower() in link_lower or link_lower in title.lower()):
+                                # If link text is part of title or title is part of link, stop
+                                if title_lower in link_lower or link_lower in title_lower:
                                     break
-                                
-                                # Add to breadcrumb if not skipped
-                                if not should_skip and link_text not in breadcrumb_items:
-                                    breadcrumb_items.append(link_text)
-                        except:
+                                # Also check if link text is very similar to title (product page link)
+                                if len(link_text) > 10 and title_lower[:20] in link_lower:
+                                    break
+                            
+                            # Basic validation: Must contain letters (valid category names)
+                            if not re.search(r'[a-zA-Z]', link_text):
+                                continue
+                            
+                            # Block list: Skip if contains unwanted terms (extra safety)
+                            link_lower = link_text.lower()
+                            block_terms = ['followers', 'products', 'rs.', 'add to cart', 'cart', 'view all']
+                            
+                            should_skip = False
+                            for term in block_terms:
+                                if term in link_lower:
+                                    should_skip = True
+                                    break
+                            
+                            # Skip product/follower counts and prices (extra safety)
+                            if re.search(r'\d+\s*Products?', link_text, re.IGNORECASE):
+                                should_skip = True
+                            if re.search(r'\d+[KkMm]?\s*Followers?', link_text, re.IGNORECASE):
+                                should_skip = True
+                            if re.search(r'Rs\.\s*\d+', link_text, re.IGNORECASE):
+                                should_skip = True
+                            
+                            # Add to breadcrumb if not skipped and not already in list
+                            if not should_skip and link_text not in breadcrumb_items:
+                                breadcrumb_items.append(link_text)
+                        except Exception as e:
+                            # Skip this link if any error occurs
                             continue
             except Exception as e:
                 pass
