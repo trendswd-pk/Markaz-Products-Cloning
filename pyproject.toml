@@ -1,7 +1,7 @@
 [project]
 name = "markaz-scraper"
 version = "0.1.0"
-requires-python = "==3.12.*"
+requires-python = ">=3.12"
 description = "Markaz product scraper for Shopify CSV conversion"
 dependencies = [
     "streamlit>=1.30.0",
