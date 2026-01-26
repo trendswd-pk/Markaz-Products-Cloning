@@ -1,6 +1,6 @@
 # 🛍️ Markaz to Shopify CSV Converter
 
-A Streamlit web application that scrapes product data from Markaz marketplace and converts it into Shopify-compatible CSV format. This tool automates the process of extracting product information, handling variants, and formatting data for easy import into Shopify.
+A powerful web application that scrapes product data from Markaz marketplace and converts it into Shopify-compatible CSV format. Available as both a Streamlit web app and a Vercel serverless API.
 
 ## ✨ Features
 
@@ -20,14 +20,9 @@ A Streamlit web application that scrapes product data from Markaz marketplace an
 - **Bulk Processing**: Add multiple products to a list and export all at once
 - **User-Friendly Interface**: Clean Streamlit UI with product preview and CSV download
 
-## 🚀 Installation
+## 🚀 Quick Start
 
-### Prerequisites
-
-- Python 3.8 or higher
-- pip (Python package manager)
-
-### Setup Steps
+### Local Development
 
 1. **Clone the repository**
    ```bash
@@ -35,7 +30,7 @@ A Streamlit web application that scrapes product data from Markaz marketplace an
    cd Markaz-Products-Cloning
    ```
 
-2. **Create a virtual environment** (recommended)
+2. **Create a virtual environment**
    ```bash
    python3 -m venv venv
    source venv/bin/activate  # On Windows: venv\Scripts\activate
@@ -44,38 +39,95 @@ A Streamlit web application that scrapes product data from Markaz marketplace an
 3. **Install dependencies**
    ```bash
    pip install -r requirements.txt
-   ```
-
-4. **Install Playwright browsers**
-   ```bash
    playwright install chromium
    ```
 
-## 📖 Usage
-
-### Running the Application
-
-1. **Activate the virtual environment** (if not already activated)
-   ```bash
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-2. **Run the Streamlit app**
+4. **Run the Streamlit app**
    ```bash
    streamlit run app.py
    ```
 
-   Or use the provided shell script:
+   The app will open at `http://localhost:8501`
+
+## 📦 Project Structure
+
+```
+Markaz-Products-Cloning/
+├── app.py                 # Main Streamlit application
+├── api/
+│   └── index.py          # Vercel serverless function (API endpoint)
+├── requirements.txt       # Python dependencies
+├── packages.txt          # OS-level dependencies (for Streamlit Cloud)
+├── vercel.json           # Vercel deployment configuration
+├── pyproject.toml        # Python project configuration
+├── runtime.txt          # Python version specification
+├── .vercelignore        # Files to ignore for Vercel
+├── .gitignore          # Files to ignore for Git
+└── README.md            # This file
+```
+
+## 🌐 Deployment Options
+
+### Option 1: Streamlit Community Cloud (Recommended for UI)
+
+**Best for:** Full Streamlit web application with UI
+
+1. **Push code to GitHub**
    ```bash
-   chmod +x run.sh
-   ./run.sh
+   git add .
+   git commit -m "Initial commit"
+   git push origin main
    ```
 
-3. **Open your browser**
-   - The app will automatically open at `http://localhost:8501`
-   - If not, navigate to the URL shown in the terminal
+2. **Deploy on Streamlit Cloud**
+   - Visit: https://streamlit.io/cloud
+   - Sign in with GitHub
+   - Click "New app"
+   - Select repository and branch
+   - Main file: `app.py`
+   - Click "Deploy"
 
-### Using the Application
+**Requirements:**
+- ✅ `requirements.txt` (includes streamlit, playwright, pandas)
+- ✅ `packages.txt` (system dependencies for Playwright)
+- ✅ `app.py` in root directory
+
+**Features:**
+- Full Streamlit UI
+- Free tier available
+- Automatic browser installation
+- WebSocket support
+
+### Option 2: Vercel (API Endpoint)
+
+**Best for:** Serverless API endpoint for scraping
+
+1. **Push code to GitHub**
+
+2. **Deploy on Vercel**
+   - Visit: https://vercel.com
+   - Import GitHub repository
+   - Vercel auto-detects Python function
+
+**Configuration:**
+- ✅ `vercel.json` configured
+- ✅ `api/index.py` as serverless function
+- ✅ Minimal dependencies (playwright only)
+
+**Usage:**
+```
+https://your-app.vercel.app?url=PRODUCT_URL
+```
+
+**Features:**
+- Fast serverless API
+- JSON responses
+- Free tier available
+- No WebSocket needed
+
+## 📖 Usage
+
+### Using the Streamlit App
 
 1. **Add Products**:
    - Paste a Markaz product URL in the input field
@@ -90,6 +142,27 @@ A Streamlit web application that scrapes product data from Markaz marketplace an
 3. **Download CSV**:
    - Click "Download Shopify CSV" to export all products
    - The CSV file will be ready for direct import into Shopify
+
+### Using the Vercel API
+
+**Endpoint:**
+```
+GET https://your-app.vercel.app?url=PRODUCT_URL
+```
+
+**Response:**
+```json
+{
+  "title": "Product Title",
+  "description": "Product Description",
+  "price": "1500",
+  "base_sku": "MZ51500000049KSAA",
+  "variants": ["Small", "Medium", "Large"],
+  "image_urls": ["https://..."],
+  "breadcrumb_items": ["Marketplace", "Men", "Track Suit"],
+  "status": "success"
+}
+```
 
 ## 📋 CSV Format Details
 
@@ -117,6 +190,13 @@ The generated CSV includes all 48 Shopify-required columns:
 - Variant SKU format: `[Base SKU]-[Variant Value]`
 - Example: `MZ51500000049KSAA-Small`, `MZ51500000049KSAA-Medium`
 
+### Breadcrumb Extraction
+
+- Extracts navigation path: `Marketplace / Men / Track Suit`
+- Tags: All breadcrumb items (comma-separated)
+- Standard Product Type: Second-to-last item
+- Filters out: Followers, Products count, Prices
+
 ## 🛠️ Technical Details
 
 ### Technologies Used
@@ -124,19 +204,17 @@ The generated CSV includes all 48 Shopify-required columns:
 - **Streamlit**: Web application framework
 - **Playwright**: Browser automation for scraping JavaScript-rendered content
 - **Pandas**: Data manipulation and CSV generation
-- **BeautifulSoup**: HTML parsing (backup)
-- **Requests**: HTTP requests (backup)
+- **Python 3.12+**: Programming language
 
-### Project Structure
+### Dependencies
 
-```
-Markaz-Products-Cloning/
-├── app.py                 # Main Streamlit application
-├── requirements.txt       # Python dependencies
-├── run.sh                # Shell script to run the app
-├── README.md             # This file
-└── venv/                 # Virtual environment (created during setup)
-```
+**Python Packages** (`requirements.txt`):
+- `streamlit>=1.30.0` - Web framework
+- `playwright>=1.40.0` - Browser automation
+- `pandas>=2.0.0` - Data manipulation
+
+**System Packages** (`packages.txt` - for Streamlit Cloud):
+- Chromium browser dependencies (libnss3, libatk1.0-0, etc.)
 
 ## 🔧 Configuration
 
@@ -169,6 +247,7 @@ https://www.shop.markaz.app/explore/product/Grey%20Mobile%20Phone%20Holder/57997
 - Ensure you have a stable internet connection
 - Some products may not have variants (will default to 'Default Title')
 - Breadcrumb extraction requires the page to have proper navigation structure
+- For Vercel deployment, browsers are installed at runtime (not during build)
 
 ## 🐛 Troubleshooting
 
@@ -187,6 +266,16 @@ https://www.shop.markaz.app/explore/product/Grey%20Mobile%20Phone%20Holder/57997
    - Check if the URL is valid
    - Verify internet connection
    - The website structure may have changed
+
+4. **Vercel build fails (size limit)**
+   - Ensure only `playwright==1.40.0` in requirements.txt
+   - Check `.vercelignore` includes all unnecessary files
+   - Browsers install at runtime, not during build
+
+5. **Streamlit Cloud build fails**
+   - Verify `packages.txt` has all system dependencies
+   - Check `requirements.txt` has all Python packages
+   - Ensure `app.py` is in root directory
 
 ## 📄 License
 

@@ -55,14 +55,8 @@ htmlcov/
 .ruff_cache/
 
 # Documentation (not needed for deployment)
-*.md
-!README.md
+# Keep README.md for GitHub
 docs/
-DEPLOYMENT_GUIDE.md
-VERCEL_SETUP.md
-VERCEL_FIX.md
-BUILD_FIX.md
-SIZE_OPTIMIZATION.md
 
 # Test files
 tests/
