@@ -679,9 +679,14 @@ def create_shopify_row(product, variant_value="", image_url="", image_position="
             variant_price = original_price + 1000
         
         variant_price_formatted = f"{variant_price:.2f}"
+        
+        # Calculate Compare At Price: Variant Price + 1500
+        compare_at_price = variant_price + 1500
+        compare_at_price_formatted = f"{compare_at_price:.2f}"
     except:
         cost_per_item = "0.00" if is_first_variant else ""
         variant_price_formatted = "0.00"
+        compare_at_price_formatted = "0.00"
     
     # Generate Variant SKU: Base SKU + "-" + variant value
     base_sku = product.get('base_sku', '')
@@ -748,7 +753,7 @@ def create_shopify_row(product, variant_value="", image_url="", image_position="
         'Variant Inventory Policy': 'continue' if is_variant_row else '',
         'Variant Fulfillment Service': 'manual' if is_variant_row else '',
         'Variant Price': variant_price_formatted if is_variant_row else '',
-        'Variant Compare At Price': '',
+        'Variant Compare At Price': compare_at_price_formatted if is_variant_row else '',
         'Variant Requires Shipping': 'TRUE' if is_variant_row else '',
         'Variant Taxable': 'TRUE' if is_variant_row else '',
         'Variant Barcode': '',
