@@ -30,16 +30,27 @@ Vercel Dashboard mein yeh environment variables add karein:
 
 Vercel Dashboard mein **Build & Development Settings** section mein:
 
+### ⚠️ IMPORTANT: Vercel uses `uv` (not `pip`)
+
+Vercel automatically installs dependencies using `uv`. **DO NOT** use `pip install` in build command.
+
 ### Install Command:
-```bash
-pip install -r requirements.txt && playwright install chromium && playwright install-deps chromium
-```
+**Leave empty** - Vercel automatically installs from `requirements.txt` using `uv`
 
 ### Build Command:
-(Leave empty - Vercel automatically build karega)
+```bash
+python -m playwright install chromium && python -m playwright install-deps chromium
+```
 
-**Important:** Playwright browsers install karna zaroori hai. Agar build command mein automatically nahi ho raha, to manually add karein:
-- Install Command: `pip install -r requirements.txt && playwright install chromium && playwright install-deps chromium`
+**Alternative (if above doesn't work):**
+```bash
+playwright install chromium && playwright install-deps chromium
+```
+
+**Important Notes:**
+- Vercel automatically installs Python packages from `requirements.txt` using `uv`
+- We only need to install Playwright browsers AFTER dependencies are installed
+- Use `python -m playwright` to ensure we're using the correct Python environment
 
 ---
 
@@ -61,8 +72,10 @@ Current `vercel.json` clean hai aur properly configured hai:
 
 2. **Build Command Set Karein:**
    - Vercel Dashboard → Settings → Build & Development Settings
-   - Install Command: `pip install -r requirements.txt && playwright install chromium && playwright install-deps chromium`
-   - Build Command: (Leave empty)
+   - **Install Command:** (Leave empty - Vercel automatically installs using `uv`)
+   - **Build Command:** `python -m playwright install chromium && python -m playwright install-deps chromium`
+   
+   **⚠️ Important:** Vercel uses `uv` package manager, NOT `pip`. Do NOT use `pip install` in build commands.
 
 3. **vercel.json Configuration:**
    - Already configured with:
@@ -117,9 +130,17 @@ Current `vercel.json` clean hai aur properly configured hai:
 - ✅ Routes properly configured hain
 - ✅ No conflicting configurations
 
-### Playwright Not Found:
-- ✅ Build command mein `playwright install chromium` add karein
-- ✅ Environment variable `PLAYWRIGHT_BROWSERS_PATH=0` set karein
+### Playwright Not Found / Build Failed:
+- ✅ **DO NOT** use `pip install` in build command (Vercel uses `uv`)
+- ✅ Install Command: Leave empty (Vercel auto-installs)
+- ✅ Build Command: `python -m playwright install chromium && python -m playwright install-deps chromium`
+- ✅ Environment variable `PLAYWRIGHT_BROWSERS_PATH=0` set karein (optional)
+
+### "externally-managed-environment" Error:
+- ✅ This happens when trying to use `pip` in a `uv`-managed environment
+- ✅ Solution: Remove `pip install -r requirements.txt` from build command
+- ✅ Vercel automatically installs dependencies using `uv`
+- ✅ Only run `playwright install` commands in Build Command
 
 ### Memory Issues:
 - ✅ Browser flags add kiye hain (--no-sandbox, --single-process)
