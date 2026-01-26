@@ -6,8 +6,23 @@ Optimized for Playwright scraping with memory-efficient browser flags
 import json
 import re
 import os
+import subprocess
 from urllib.parse import urljoin, parse_qs
 from html import escape
+
+# Playwright Browser Fix: Install chromium browser on Vercel
+# This ensures browser is available when function runs
+try:
+    # Check if running on Vercel
+    if os.getenv('VERCEL') == '1' or os.getenv('VERCEL_ENV'):
+        # Install chromium browser (silent mode)
+        subprocess.run(['playwright', 'install', 'chromium'], 
+                      capture_output=True, 
+                      timeout=300,
+                      check=False)
+except Exception:
+    # If installation fails, continue - browser might already be installed
+    pass
 
 def app(request):
     """

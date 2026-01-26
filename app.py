@@ -3,8 +3,20 @@ from playwright.sync_api import sync_playwright
 import pandas as pd
 import re
 import os
+import subprocess
 from urllib.parse import urljoin
 from html import escape
+
+# Playwright Browser Fix: Install chromium browser
+# This ensures browser is available when app runs
+try:
+    subprocess.run(['playwright', 'install', 'chromium'], 
+                  capture_output=True, 
+                  timeout=300,
+                  check=False)
+except Exception:
+    # If installation fails, continue - browser might already be installed
+    pass
 
 # Page configuration
 st.set_page_config(
