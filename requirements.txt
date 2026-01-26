@@ -1,5 +1,2 @@
-beautifulsoup4>=4.12.2
-pandas>=2.2.0
-lxml>=4.9.3
-requests>=2.31.0
-playwright>=1.40.0
+# Minimal dependencies for Vercel deployment
+# Playwright will be added after basic function works
