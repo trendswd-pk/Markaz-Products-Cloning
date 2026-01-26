@@ -38,6 +38,9 @@ pip install -r requirements.txt && playwright install chromium && playwright ins
 ### Build Command:
 (Leave empty - Vercel automatically build karega)
 
+**Important:** Playwright browsers install karna zaroori hai. Agar build command mein automatically nahi ho raha, to manually add karein:
+- Install Command: `pip install -r requirements.txt && playwright install chromium && playwright install-deps chromium`
+
 ---
 
 ## 📝 vercel.json Configuration
@@ -52,33 +55,58 @@ Current `vercel.json` clean hai aur properly configured hai:
 
 ## ✅ Deployment Steps
 
-1. **Environment Variables Add Karein:**
+1. **Environment Variables Add Karein (Optional):**
    - Vercel Dashboard → Settings → Environment Variables
-   - `PLAYWRIGHT_BROWSERS_PATH` = `0`
+   - `PLAYWRIGHT_BROWSERS_PATH` = `0` (optional, system browsers use karne ke liye)
 
 2. **Build Command Set Karein:**
    - Vercel Dashboard → Settings → Build & Development Settings
    - Install Command: `pip install -r requirements.txt && playwright install chromium && playwright install-deps chromium`
+   - Build Command: (Leave empty)
 
-3. **Deploy:**
+3. **vercel.json Configuration:**
+   - Already configured with:
+     - Memory: 1024 MB
+     - Max Duration: 60 seconds
+     - Browser flags: `--no-sandbox`, `--disable-setuid-sandbox`, `--disable-dev-shm-usage`, `--single-process`, `--disable-gpu`
+     - Headless mode: `true` (hardcoded)
+
+4. **Deploy:**
    - GitHub se automatically deploy hoga
    - Ya manually: `vercel --prod`
+
+5. **Test:**
+   - Visit: `https://your-app.vercel.app`
+   - Test scraping: `https://your-app.vercel.app?url=PRODUCT_URL`
 
 ---
 
 ## ⚠️ Important Notes
 
 1. **Size Limit:** Playwright + Chromium ~165 MB hai. Agar 250 MB limit exceed ho to:
-   - Pro plan upgrade karein
-   - Ya Playwright remove karein
+   - Pro plan upgrade karein (512 MB unzipped limit)
+   - Ya Playwright remove karein (but scraping nahi hoga)
 
-2. **Memory:** 1024 MB set kiya hai. Agar zyada chahiye to:
-   - Pro plan upgrade karein
-   - Ya memory optimize karein
+2. **Memory:** 1024 MB set kiya hai (vercel.json mein). Agar zyada chahiye to:
+   - Pro plan upgrade karein (max 3008 MB)
+   - Ya memory optimize karein (browser flags already added)
 
-3. **Timeout:** 60 seconds set kiya hai. Agar zyada chahiye to:
-   - `maxDuration` increase karein
+3. **Timeout:** 60 seconds set kiya hai (vercel.json mein). Agar zyada chahiye to:
+   - `maxDuration` increase karein (max 300 seconds for Pro)
    - Ya scraping logic optimize karein
+
+4. **Browser Optimization:**
+   - All memory-saving flags already added:
+     - `--no-sandbox`
+     - `--disable-setuid-sandbox`
+     - `--disable-dev-shm-usage`
+     - `--single-process`
+     - `--disable-gpu`
+   - Headless mode: `true` (hardcoded)
+
+5. **Breadcrumb Extraction:**
+   - Fixed to only use `main a[href*="/explore"]` selector
+   - Prevents picking up 'Followers' and 'Products' text
 
 ---
 

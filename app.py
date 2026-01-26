@@ -128,11 +128,20 @@ def convert_description_to_html(description):
     return ''.join(html_parts) if html_parts else f"<p>{escape(description)}</p>"
 
 def scrape_markaz_product(url):
-    """Scrape product data from Markaz product URL using Playwright"""
+    """Scrape product data from Markaz product URL using Playwright - Optimized for Vercel"""
     try:
         with sync_playwright() as p:
-            # Launch browser in headless mode
-            browser = p.chromium.launch(headless=True)
+            # Launch browser with Vercel-optimized flags to reduce memory footprint
+            browser = p.chromium.launch(
+                headless=True,  # Hardcoded headless mode
+                args=[
+                    '--no-sandbox',
+                    '--disable-setuid-sandbox',
+                    '--disable-dev-shm-usage',
+                    '--single-process',
+                    '--disable-gpu'
+                ]
+            )
             page = browser.new_page()
             
             # Navigate to the page
@@ -226,106 +235,51 @@ def scrape_markaz_product(url):
             except Exception as e:
                 st.warning(f"Could not extract price: {str(e)}")
             
-            # Extract breadcrumb navigation from the very top of the page (after title is extracted)
-            # Capture Method: Find the entire breadcrumb container and get full text string
+            # Extract breadcrumb navigation - STRICT: Only use main a[href*="/explore"] links
+            # This prevents picking up 'Followers' and 'Products' text
             breadcrumb_items = []
             try:
-                # Find the breadcrumb container (usually ant-breadcrumb or div with many / separators)
-                breadcrumb_container = None
-                breadcrumb_text = ""
+                # STRICT SELECTOR: Only get links from main that have href containing "/explore"
+                breadcrumb_links = page.locator('main a[href*="/explore"]').all()
                 
-                # Try to find ant-breadcrumb container first
-                try:
-                    ant_breadcrumb = page.locator('.ant-breadcrumb, [class*="breadcrumb"]').first
-                    if ant_breadcrumb.count() > 0:
-                        breadcrumb_container = ant_breadcrumb
-                        breadcrumb_text = ant_breadcrumb.inner_text().strip()
-                except:
-                    pass
-                
-                # If not found, look for div with / separators in main
-                if not breadcrumb_text or 'Marketplace' not in breadcrumb_text:
-                    try:
-                        # Look for divs in main that contain 'Marketplace' and '/'
-                        main_divs = page.locator('main div').all()
-                        for div in main_divs[:20]:  # Check first 20 divs
-                            try:
-                                div_text = div.inner_text().strip()
-                                # Check if it looks like a breadcrumb (has Marketplace and / separators)
-                                if 'Marketplace' in div_text and '/' in div_text:
-                                    # Count / separators - breadcrumb should have multiple
-                                    separator_count = div_text.count('/')
-                                    if separator_count >= 2:  # At least 2 separators
-                                        breadcrumb_text = div_text
-                                        breadcrumb_container = div
+                if breadcrumb_links:
+                    # Extract text from each link
+                    for link in breadcrumb_links:
+                        try:
+                            link_text = link.inner_text().strip()
+                            # Only add if it's not empty and doesn't contain unwanted text
+                            if link_text:
+                                link_lower = link_text.lower()
+                                # Block list: Skip if contains these terms
+                                block_terms = ['followers', 'products', 'rs.', 'add to cart', 'cart']
+                                should_skip = False
+                                
+                                for term in block_terms:
+                                    if term in link_lower:
+                                        should_skip = True
                                         break
-                            except:
-                                continue
-                    except:
-                        pass
-                
-                # If still not found, try getting text from main element that contains Marketplace
-                if not breadcrumb_text or 'Marketplace' not in breadcrumb_text:
-                    try:
-                        main_text = page.locator('main').first.inner_text()
-                        # Look for breadcrumb pattern: Marketplace / ... / ...
-                        breadcrumb_match = re.search(r'Marketplace\s*[/\\]\s*[^\n]+', main_text, re.IGNORECASE)
-                        if breadcrumb_match:
-                            breadcrumb_text = breadcrumb_match.group(0).strip()
-                    except:
-                        pass
-                
-                # Clean Split: Split the string by the / character to get a list
-                if breadcrumb_text and 'Marketplace' in breadcrumb_text:
-                    # Split by / or \
-                    items = re.split(r'\s*[/\\]\s*', breadcrumb_text)
-                    
-                    # List Cleaning: Process each item
-                    cleaned_list = []
-                    for item in items:
-                        # Trim spaces from each item
-                        item = item.strip()
-                        
-                        # Skip empty items
-                        if not item:
+                                
+                                # Skip product/follower counts and prices
+                                if re.search(r'\d+\s*Products?', link_text, re.IGNORECASE):
+                                    should_skip = True
+                                if re.search(r'\d+[KkMm]?\s*Followers?', link_text, re.IGNORECASE):
+                                    should_skip = True
+                                if re.search(r'Rs\.?\s*\d+', link_text, re.IGNORECASE):
+                                    should_skip = True
+                                
+                                # Only keep if it contains letters (valid category names)
+                                if not re.search(r'[a-zA-Z]', link_text):
+                                    should_skip = True
+                                
+                                # Stop at product title - if this link text matches title, stop collecting
+                                if title and (title.lower() in link_lower or link_lower in title.lower()):
+                                    break
+                                
+                                # Add to breadcrumb if not skipped and not already in list
+                                if not should_skip and link_text not in breadcrumb_items:
+                                    breadcrumb_items.append(link_text)
+                        except:
                             continue
-                        
-                        # Filter out unwanted items
-                        item_lower = item.lower()
-                        should_skip = False
-                        
-                        # Skip if it contains block list terms
-                        block_terms = ['followers', 'products', 'rs.', 'add to cart', 'cart']
-                        for term in block_terms:
-                            if term in item_lower:
-                                should_skip = True
-                                break
-                        
-                        # Skip product counts, follower counts, prices
-                        if re.search(r'\d+\s*Products?', item, re.IGNORECASE):
-                            should_skip = True
-                        if re.search(r'\d+[KkMm]?\s*Followers?', item, re.IGNORECASE):
-                            should_skip = True
-                        if re.search(r'Rs\.?\s*\d+', item, re.IGNORECASE):
-                            should_skip = True
-                        
-                        # Only keep items with letters (valid category names)
-                        if not re.search(r'[a-zA-Z]', item):
-                            should_skip = True
-                        
-                        if not should_skip and item:
-                            cleaned_list.append(item)
-                    
-                    # Remove the very last item (Product Title) from the list
-                    if cleaned_list:
-                        # Check if last item matches the product title
-                        if title and cleaned_list[-1].lower() in title.lower():
-                            cleaned_list = cleaned_list[:-1]
-                        else:
-                            # If title doesn't match, still remove last item as it's likely the product
-                            cleaned_list = cleaned_list[:-1]
-                    
-                    breadcrumb_items = cleaned_list
                 
             except Exception as e:
                 st.warning(f"Could not extract breadcrumb: {str(e)}")
