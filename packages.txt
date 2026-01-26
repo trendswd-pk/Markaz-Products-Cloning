@@ -1,6 +1,3 @@
-# System packages required for Playwright/Chromium on Linux (Streamlit Cloud)
-# These are OS-level dependencies needed for browser automation
-
 libnss3
 libatk1.0-0
 libatk-bridge2.0-0
