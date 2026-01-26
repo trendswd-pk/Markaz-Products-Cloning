@@ -1,6 +1,5 @@
-streamlit>=1.30.0
+# Ultra-minimal dependencies for Vercel
+# Only Playwright - all other libraries removed (not used in api/index.py)
+# BeautifulSoup4, lxml, requests are NOT used - Playwright handles everything
+
 playwright==1.40.0
-pandas
-beautifulsoup4
-lxml
-requests
