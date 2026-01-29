@@ -901,9 +901,16 @@ def main():
         key=f"product_url_input_{st.session_state.url_input_counter}"
     )
     
-    # Fetch Product Data Button
-    # STEP 1: Fetch product data (DO NOT add to list immediately)
-    fetch_button = st.button("📥 Fetch Product Data", type="primary", width='stretch')
+    # Fetch Product Data and Add to List Buttons
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        # STEP 1: Fetch product data (DO NOT add to list immediately)
+        fetch_button = st.button("📥 Fetch Product Data", type="primary", width='stretch')
+    
+    with col2:
+        # Quick Add to List button (fetch and add directly with default pricing)
+        quick_add_button = st.button("✅ Add to List", type="secondary", width='stretch')
     
     if fetch_button:
         if url_input:
@@ -920,6 +927,43 @@ def main():
                     # Clear session state on failure
                     st.session_state.fetched_product_data = None
                     st.session_state.show_product_dialog = False
+        else:
+            st.warning("Please enter a product URL")
+    
+    if quick_add_button:
+        if url_input:
+            with st.spinner("Fetching and adding product to list... This may take a few seconds."):
+                product_data = scrape_markaz_product(url_input)
+                
+                if product_data['status'] == 'success':
+                    # Calculate default pricing rules
+                    fetched_price = float(product_data.get('price', 0))
+                    
+                    # Default pricing rules: If price < 2000, add 500; else add 1000
+                    if fetched_price < 2000:
+                        default_variant_adjustment = 500.0
+                    else:
+                        default_variant_adjustment = 1000.0
+                    
+                    # Compare At Price = Variant Price + 1500
+                    # So adjustment = Variant Adjustment + 1500
+                    default_compare_at_adjustment = default_variant_adjustment + 1500.0
+                    
+                    # Apply default pricing adjustments
+                    product_data['variant_price_adjustment'] = default_variant_adjustment
+                    product_data['compare_at_price_adjustment'] = default_compare_at_adjustment
+                    
+                    # Add directly to products list
+                    st.session_state.products.append(product_data)
+                    
+                    # Clear URL input
+                    st.session_state.url_input_counter += 1
+                    
+                    # Show success message
+                    st.success(f"✅ **Product Added Successfully!**\n\n**{product_data['title']}** has been added to your list with default pricing rules.")
+                    st.rerun()
+                else:
+                    st.error(f"❌ Failed to scrape: {product_data['status']}")
         else:
             st.warning("Please enter a product URL")
     
