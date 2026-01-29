@@ -874,30 +874,36 @@ def main():
     st.title("🛍️ Markaz to Shopify CSV Converter")
     st.markdown("Scrape Markaz product data and convert to Shopify-compatible CSV format.")
     
-    # Add custom CSS for modal-like popup
+    # Custom CSS for button styling
     st.markdown("""
     <style>
-    .modal-container {
-        background-color: rgba(0, 0, 0, 0.1);
-        padding: 20px;
-        border-radius: 10px;
-        border: 2px solid #1f77b4;
-        margin: 20px 0;
-        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    .stButton > button {
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
     }
     </style>
     """, unsafe_allow_html=True)
     
     # Product URL input
     st.header("Add Product")
+    # Initialize URL input counter for unique keys
+    if 'url_input_counter' not in st.session_state:
+        st.session_state.url_input_counter = 0
+    
     url_input = st.text_input(
         "Product URL",
         placeholder="https://www.shop.markaz.app/explore/product/...",
-        key="product_url_input"
+        key=f"product_url_input_{st.session_state.url_input_counter}"
     )
     
     # Fetch Product Data Button
-    fetch_button = st.button("📥 Fetch Product Data", type="primary", use_container_width=True)
+    # STEP 1: Fetch product data (DO NOT add to list immediately)
+    fetch_button = st.button("📥 Fetch Product Data", type="primary", width='stretch')
     
     if fetch_button:
         if url_input:
@@ -905,108 +911,121 @@ def main():
                 product_data = scrape_markaz_product(url_input)
                 
                 if product_data['status'] == 'success':
+                    # Store fetched data in session state (temporary, not yet in main list)
                     st.session_state.fetched_product_data = product_data
                     st.session_state.show_product_dialog = True
                     st.rerun()
                 else:
                     st.error(f"❌ Failed to scrape: {product_data['status']}")
+                    # Clear session state on failure
                     st.session_state.fetched_product_data = None
                     st.session_state.show_product_dialog = False
         else:
             st.warning("Please enter a product URL")
     
-    # Show product details in modal-like popup
-    if st.session_state.fetched_product_data and st.session_state.show_product_dialog:
+    # STEP 2: Display product details in compact 3-column layout
+    if st.session_state.fetched_product_data:
         product_data = st.session_state.fetched_product_data
         
-        # Create modal-like container with border and padding
-        st.markdown('<div class="modal-container">', unsafe_allow_html=True)
-        st.markdown("---")
+        st.divider()
         
-        modal_container = st.container()
+        # Create 3 columns: [2, 3, 4] ratio
+        col1, col2, col3 = st.columns([2, 3, 4])
         
-        with modal_container:
-            # Modal header
-            st.markdown("### 📦 Product Details & Pricing")
-            st.markdown("---")
-            
-            col1, col2 = st.columns([1, 1])
-            
-            with col1:
-                st.write(f"**Title:** {product_data['title']}")
-                if product_data.get('base_sku'):
-                    st.write(f"**Base SKU:** {product_data['base_sku']}")
-                if product_data.get('variants') and len(product_data['variants']) > 0:
-                    variants_display = ', '.join(product_data['variants'])
-                    st.write(f"**{product_data.get('option1_name', 'Variants')}:** {variants_display}")
-                st.write(f"**Fetched Price:** Rs. {product_data['price']}")
-            
-            with col2:
-                if product_data.get('image_urls'):
-                    st.image(product_data['image_urls'][0], width=200, caption="Product Image")
-            
-            st.divider()
-            st.subheader("💰 Set Pricing")
-            
+        # Column 1: Product Image
+        with col1:
+            if product_data.get('image_urls'):
+                st.image(product_data['image_urls'][0], width='stretch', caption="Product Image")
+        
+        # Column 2: Product Details
+        with col2:
+            st.write(f"**Title:** {product_data['title']}")
+            if product_data.get('base_sku'):
+                st.write(f"**Base SKU:** {product_data['base_sku']}")
+            if product_data.get('variants') and len(product_data['variants']) > 0:
+                variants_display = ', '.join(product_data['variants'])
+                st.write(f"**{product_data.get('option1_name', 'Size')}:** {variants_display}")
+            st.write(f"**Fetched Price:** Rs. {product_data['price']}")
+        
+        # Column 3: Set Pricing section
+        with col3:
             # Show fetched price
             fetched_price = float(product_data.get('price', 0))
             st.info(f"**Actual Fetched Price:** Rs. {fetched_price:,.2f}")
             
-            # Price adjustment input boxes
-            col1, col2 = st.columns(2)
+            # Calculate default values based on previous pricing rules
+            # Rule: If price < 2000, add 500; else add 1000
+            if fetched_price < 2000:
+                default_variant_adjustment = 500.0
+            else:
+                default_variant_adjustment = 1000.0
             
-            with col1:
-                variant_adjustment = st.number_input(
-                    "Variant Price Adjustment",
-                    value=0.0,
-                    step=100.0,
-                    help="Enter the amount to add to fetched price for Variant Price. Final Variant Price = Fetched Price + This Value",
-                    key="dialog_variant_price_adjustment"
-                )
-                final_variant_price = fetched_price + variant_adjustment
-                st.write(f"**Final Variant Price:** Rs. {final_variant_price:,.2f}")
+            # Rule: Compare At Price = Variant Price + 1500
+            # So adjustment = Variant Adjustment + 1500
+            default_compare_at_adjustment = default_variant_adjustment + 1500.0
             
-            with col2:
-                compare_at_adjustment = st.number_input(
-                    "Compare At Price Adjustment",
-                    value=0.0,
-                    step=100.0,
-                    help="Enter the amount to add to fetched price for Compare At Price. Final Compare At Price = Fetched Price + This Value",
-                    key="dialog_compare_at_price_adjustment"
-                )
-                final_compare_at_price = fetched_price + compare_at_adjustment
-                st.write(f"**Final Compare At Price:** Rs. {final_compare_at_price:,.2f}")
+            # Variant Price Adjustment (with default value from pricing rules)
+            variant_adjustment = st.number_input(
+                "Variant Price Adjustment",
+                value=default_variant_adjustment,
+                step=100.0,
+                help="Enter the amount to add to fetched price for Variant Price. Final Variant Price = Fetched Price + This Value",
+                key="variant_price_adjustment"
+            )
+            final_variant_price = fetched_price + variant_adjustment
+            st.write(f"**Final Variant Price:** Rs. {final_variant_price:,.2f}")
             
-            st.divider()
-            
-            # Add to List and Cancel buttons
-            col1, col2 = st.columns([1, 1])
-            with col1:
-                add_to_list_button = st.button("✅ Add to List", type="primary", use_container_width=True, key="modal_add_to_list")
-            with col2:
-                cancel_button = st.button("❌ Cancel", use_container_width=True, key="modal_cancel")
-            
-            if add_to_list_button:
-                # Create a copy of product data to avoid modifying the original
-                product_to_add = copy.deepcopy(product_data)
-                
-                # Store price adjustments in product data
-                product_to_add['variant_price_adjustment'] = variant_adjustment
-                product_to_add['compare_at_price_adjustment'] = compare_at_adjustment
-                
-                # Add to products list
-                st.session_state.products.append(product_to_add)
-                st.session_state.fetched_product_data = None
-                st.session_state.show_product_dialog = False
-                st.success(f"✅ Added to list: {product_to_add['title']}")
-                st.rerun()
-            
-            if cancel_button:
-                st.session_state.show_product_dialog = False
-                st.rerun()
+            # Compare At Price Adjustment (with default value from pricing rules)
+            compare_at_adjustment = st.number_input(
+                "Compare At Price Adjustment",
+                value=default_compare_at_adjustment,
+                step=100.0,
+                help="Enter the amount to add to fetched price for Compare At Price. Final Compare At Price = Fetched Price + This Value",
+                key="compare_at_price_adjustment"
+            )
+            final_compare_at_price = fetched_price + compare_at_adjustment
+            st.write(f"**Final Compare At Price:** Rs. {final_compare_at_price:,.2f}")
         
-        st.markdown("---")
-        st.markdown('</div>', unsafe_allow_html=True)
+        st.divider()
+        
+        # Action buttons in separate row below (centered)
+        col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
+        with col3:
+            add_to_list_button = st.button("✅ Add to List", type="primary", width='stretch', key="add_to_list")
+        with col4:
+            cancel_button = st.button("❌ Cancel", width='stretch', key="cancel_preview")
+        
+        # Handle "Add to List" button click
+        if add_to_list_button:
+            # Create a deep copy of product data to avoid modifying the original
+            product_to_add = copy.deepcopy(product_data)
+            
+            # Store price adjustments in product data
+            product_to_add['variant_price_adjustment'] = variant_adjustment
+            product_to_add['compare_at_price_adjustment'] = compare_at_adjustment
+            
+            # Add product to the main conversion list (st.session_state.products)
+            st.session_state.products.append(product_to_add)
+            
+            # Clear fetched data from session state (preview section clears)
+            st.session_state.fetched_product_data = None
+            st.session_state.show_product_dialog = False
+            
+            # Increment counter to create new widget key (this clears the input)
+            st.session_state.url_input_counter += 1
+            
+            # Show success message
+            st.success(f"✅ **Product Added Successfully!**\n\n**{product_to_add['title']}** has been added to your conversion list.")
+            
+            # Refresh to show updated main list and clear preview
+            st.rerun()
+        
+        # Handle "Cancel" button click
+        if cancel_button:
+            # Clear fetched data from screen
+            st.session_state.fetched_product_data = None
+            st.session_state.show_product_dialog = False
+            st.rerun()
     
     st.divider()
     
@@ -1016,6 +1035,11 @@ def main():
         
         # Display products
         for idx, product in enumerate(st.session_state.products):
+            # Initialize edit state for each product
+            edit_key = f"edit_{idx}"
+            if edit_key not in st.session_state:
+                st.session_state[edit_key] = False
+            
             with st.expander(f"Product {idx + 1}: {product['title']}", expanded=False):
                 col1, col2 = st.columns(2)
                 
@@ -1026,7 +1050,18 @@ def main():
                     if product.get('variants') and len(product['variants']) > 0:
                         variants_display = ', '.join(product['variants'])
                         st.write(f"**{product.get('option1_name', 'Variants')}:**", variants_display)
-                    st.write("**Price:**", f"Rs. {product['price']}")
+                    st.write("**Fetched Price:**", f"Rs. {product['price']}")
+                    
+                    # Calculate and display Variant Price and Compare At Price
+                    fetched_price = float(product.get('price', 0))
+                    variant_adjustment = product.get('variant_price_adjustment', 0)
+                    compare_at_adjustment = product.get('compare_at_price_adjustment', 0)
+                    
+                    final_variant_price = fetched_price + variant_adjustment
+                    final_compare_at_price = fetched_price + compare_at_adjustment
+                    
+                    st.write("**Variant Price:**", f"Rs. {final_variant_price:,.2f}")
+                    st.write("**Compare At Price:**", f"Rs. {final_compare_at_price:,.2f}")
                     st.write("**URL:**", product['url'])
                 
                 with col2:
@@ -1035,9 +1070,59 @@ def main():
                     if product['image_urls']:
                         st.image(product['image_urls'][0], width=200, caption="First Image")
                 
-                if st.button(f"Remove Product {idx + 1}", key=f"remove_{idx}"):
-                    st.session_state.products.pop(idx)
-                    st.rerun()
+                st.divider()
+                
+                # Edit mode: Show input fields for price adjustments
+                if st.session_state[edit_key]:
+                    st.subheader("✏️ Edit Pricing")
+                    
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        new_variant_adjustment = st.number_input(
+                            "Variant Price Adjustment",
+                            value=float(variant_adjustment),
+                            step=100.0,
+                            key=f"edit_variant_{idx}"
+                        )
+                        new_final_variant = fetched_price + new_variant_adjustment
+                        st.write(f"**New Variant Price:** Rs. {new_final_variant:,.2f}")
+                    
+                    with col2:
+                        new_compare_at_adjustment = st.number_input(
+                            "Compare At Price Adjustment",
+                            value=float(compare_at_adjustment),
+                            step=100.0,
+                            key=f"edit_compare_{idx}"
+                        )
+                        new_final_compare = fetched_price + new_compare_at_adjustment
+                        st.write(f"**New Compare At Price:** Rs. {new_final_compare:,.2f}")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("💾 Save Changes", key=f"save_{idx}", width='stretch'):
+                            product['variant_price_adjustment'] = new_variant_adjustment
+                            product['compare_at_price_adjustment'] = new_compare_at_adjustment
+                            st.session_state[edit_key] = False
+                            st.success("✅ Prices updated successfully!")
+                            st.rerun()
+                    with col2:
+                        if st.button("❌ Cancel", key=f"cancel_edit_{idx}", width='stretch'):
+                            st.session_state[edit_key] = False
+                            st.rerun()
+                    
+                    st.divider()
+                
+                # Action buttons: Edit and Remove
+                col1, col2 = st.columns(2)
+                with col1:
+                    if st.button(f"✏️ Edit Prices", key=f"edit_btn_{idx}", width='stretch'):
+                        st.session_state[edit_key] = True
+                        st.rerun()
+                with col2:
+                    if st.button(f"🗑️ Remove Product {idx + 1}", key=f"remove_{idx}", width='stretch'):
+                        st.session_state.products.pop(idx)
+                        st.rerun()
         
         st.divider()
         
@@ -1088,12 +1173,12 @@ def main():
             file_name="shopify_products.csv",
             mime="text/csv",
             type="primary",
-            use_container_width=True
+            width='stretch'
         )
         
         # Show preview
         st.subheader("CSV Preview")
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width='stretch')
         
         # Clear all button
         if st.button("Clear All Products", type="secondary"):
