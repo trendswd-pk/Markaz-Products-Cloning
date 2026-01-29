@@ -874,7 +874,7 @@ def main():
     st.title("🛍️ Markaz to Shopify CSV Converter")
     st.markdown("Scrape Markaz product data and convert to Shopify-compatible CSV format.")
     
-    # Custom CSS for button styling
+    # Custom CSS for button styling and auto-focus script
     st.markdown("""
     <style>
     .stButton > button {
@@ -887,6 +887,36 @@ def main():
         box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
     }
     </style>
+    
+    <script>
+    // Auto-focus function that runs after page load
+    function autoFocusURLInput() {
+        // Wait for Streamlit to render
+        setTimeout(function() {
+            // Try to find the URL input field
+            const inputs = document.querySelectorAll('input[type="text"]');
+            for (let input of inputs) {
+                if (input.placeholder && input.placeholder.includes('shop.markaz.app')) {
+                    input.focus();
+                    input.select();
+                    // Scroll into view
+                    input.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                    return;
+                }
+            }
+        }, 300);
+    }
+    
+    // Run on page load
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', autoFocusURLInput);
+    } else {
+        autoFocusURLInput();
+    }
+    
+    // Also listen for Streamlit's custom event
+    window.addEventListener('load', autoFocusURLInput);
+    </script>
     """, unsafe_allow_html=True)
     
     # Product URL input
@@ -895,22 +925,111 @@ def main():
     if 'url_input_counter' not in st.session_state:
         st.session_state.url_input_counter = 0
     
+    # Initialize focus flag
+    if 'focus_url_input' not in st.session_state:
+        st.session_state.focus_url_input = False
+    
     url_input = st.text_input(
         "Product URL",
         placeholder="https://www.shop.markaz.app/explore/product/...",
         key=f"product_url_input_{st.session_state.url_input_counter}"
     )
     
-    # Fetch Product Data and Add to List Buttons
+    # Add Enter key listener to trigger Add to List button
+    st.markdown("""
+    <script>
+    (function() {
+        function setupEnterKeyListener() {
+            var inputs = document.querySelectorAll('input[type="text"]');
+            for (var i = 0; i < inputs.length; i++) {
+                var placeholder = (inputs[i].getAttribute('placeholder') || '').toLowerCase();
+                if (placeholder.indexOf('shop.markaz.app') !== -1 || placeholder.indexOf('product url') !== -1) {
+                    // Remove existing listener if any
+                    var newInput = inputs[i].cloneNode(true);
+                    inputs[i].parentNode.replaceChild(newInput, inputs[i]);
+                    
+                    newInput.addEventListener('keypress', function(e) {
+                        if (e.key === 'Enter' || e.keyCode === 13) {
+                            e.preventDefault();
+                            // Find the "Add to List" button by data-testid or text
+                            var buttons = document.querySelectorAll('button');
+                            for (var j = 0; j < buttons.length; j++) {
+                                var buttonText = (buttons[j].textContent || buttons[j].innerText || '').toLowerCase();
+                                var buttonId = buttons[j].getAttribute('data-testid') || '';
+                                if (buttonText.includes('add to list') || buttonText.includes('✅') || buttonId.includes('quick_add')) {
+                                    buttons[j].click();
+                                    return;
+                                }
+                            }
+                        }
+                    });
+                    break;
+                }
+            }
+        }
+        
+        // Setup listener with delays to ensure input is rendered
+        setTimeout(setupEnterKeyListener, 100);
+        setTimeout(setupEnterKeyListener, 300);
+        setTimeout(setupEnterKeyListener, 600);
+        setTimeout(setupEnterKeyListener, 1000);
+        
+        // Also use MutationObserver to catch dynamically added inputs
+        var observer = new MutationObserver(function() {
+            setupEnterKeyListener();
+        });
+        observer.observe(document.body, { childList: true, subtree: true });
+        setTimeout(function() { observer.disconnect(); }, 5000);
+    })();
+    </script>
+    """, unsafe_allow_html=True)
+    
+    # Auto-focus URL input when flag is set
+    if st.session_state.focus_url_input:
+        # Use components.html for reliable JavaScript execution
+        # Note: components.html doesn't support 'key' parameter
+        st.components.v1.html("""
+        <script>
+        (function() {
+            function focusInput() {
+                var inputs = document.querySelectorAll('input[type="text"]');
+                for (var i = 0; i < inputs.length; i++) {
+                    var placeholder = (inputs[i].getAttribute('placeholder') || '').toLowerCase();
+                    if (placeholder.indexOf('shop.markaz.app') !== -1 || placeholder.indexOf('product url') !== -1) {
+                        try {
+                            inputs[i].focus();
+                            inputs[i].select();
+                            inputs[i].scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            return true;
+                        } catch(e) {
+                            console.log('Focus error:', e);
+                        }
+                    }
+                }
+                return false;
+            }
+            
+            // Try multiple times with delays to ensure input is rendered
+            setTimeout(focusInput, 100);
+            setTimeout(focusInput, 300);
+            setTimeout(focusInput, 600);
+            setTimeout(focusInput, 1000);
+            setTimeout(focusInput, 1500);
+        })();
+        </script>
+        """, height=0)
+        st.session_state.focus_url_input = False
+    
+    # Add to List and Fetch Product Data Buttons (reordered)
     col1, col2 = st.columns(2)
     
     with col1:
-        # STEP 1: Fetch product data (DO NOT add to list immediately)
-        fetch_button = st.button("📥 Fetch Product Data", type="primary", width='stretch')
+        # Quick Add to List button (fetch and add directly with default pricing)
+        quick_add_button = st.button("✅ Add to List", type="primary", width='stretch', key="quick_add_button")
     
     with col2:
-        # Quick Add to List button (fetch and add directly with default pricing)
-        quick_add_button = st.button("✅ Add to List", type="secondary", width='stretch')
+        # STEP 1: Fetch product data (DO NOT add to list immediately)
+        fetch_button = st.button("📥 Fetch Product Data", type="secondary", width='stretch')
     
     if fetch_button:
         if url_input:
@@ -956,8 +1075,9 @@ def main():
                     # Add directly to products list
                     st.session_state.products.append(product_data)
                     
-                    # Clear URL input
+                    # Clear URL input and set focus flag
                     st.session_state.url_input_counter += 1
+                    st.session_state.focus_url_input = True
                     
                     # Show success message
                     st.success(f"✅ **Product Added Successfully!**\n\n**{product_data['title']}** has been added to your list with default pricing rules.")
@@ -1057,6 +1177,7 @@ def main():
             
             # Increment counter to create new widget key (this clears the input)
             st.session_state.url_input_counter += 1
+            st.session_state.focus_url_input = True
             
             # Show success message
             st.success(f"✅ **Product Added Successfully!**\n\n**{product_to_add['title']}** has been added to your conversion list.")
