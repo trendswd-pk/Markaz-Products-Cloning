@@ -199,8 +199,16 @@ def scrape_markaz_product(url):
             page = context.new_page()
             
             # Suppress console warnings about unrecognized features (like ambient-light-sensor)
+            # This warning comes from the website's Permissions Policy, not our code
             def suppress_warnings(msg):
-                if 'Unrecognized feature' in msg.text or 'ambient-light-sensor' in msg.text:
+                msg_text = msg.text if hasattr(msg, 'text') else str(msg)
+                # Suppress Permissions Policy warnings
+                if any(keyword in msg_text for keyword in [
+                    'Unrecognized feature',
+                    'ambient-light-sensor',
+                    'Permissions Policy',
+                    'Feature Policy'
+                ]):
                     return  # Suppress these warnings silently
             page.on('console', suppress_warnings)
             
@@ -894,7 +902,7 @@ def main():
     st.title("🛍️ Markaz to Shopify CSV Converter")
     st.markdown("Scrape Markaz product data and convert to Shopify-compatible CSV format.")
     
-    # Custom CSS for button styling and auto-focus script
+    # Custom CSS for button styling
     st.markdown("""
     <style>
     .stButton > button {
@@ -907,36 +915,6 @@ def main():
         box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
     }
     </style>
-    
-    <script>
-    // Auto-focus function that runs after page load
-    function autoFocusURLInput() {
-        // Wait for Streamlit to render
-        setTimeout(function() {
-            // Try to find the URL input field
-            const inputs = document.querySelectorAll('input[type="text"]');
-            for (let input of inputs) {
-                if (input.placeholder && input.placeholder.includes('shop.markaz.app')) {
-                    input.focus();
-                    input.select();
-                    // Scroll into view
-                    input.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                    return;
-                }
-            }
-        }, 300);
-    }
-    
-    // Run on page load
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', autoFocusURLInput);
-    } else {
-        autoFocusURLInput();
-    }
-    
-    // Also listen for Streamlit's custom event
-    window.addEventListener('load', autoFocusURLInput);
-    </script>
     """, unsafe_allow_html=True)
     
     # Product URL input
@@ -944,10 +922,6 @@ def main():
     # Initialize URL input counter for unique keys
     if 'url_input_counter' not in st.session_state:
         st.session_state.url_input_counter = 0
-    
-    # Initialize focus flag
-    if 'focus_url_input' not in st.session_state:
-        st.session_state.focus_url_input = False
     
     url_input = st.text_input(
         "Product URL",
@@ -1004,42 +978,6 @@ def main():
     </script>
     """, unsafe_allow_html=True)
     
-    # Auto-focus URL input when flag is set
-    if st.session_state.focus_url_input:
-        # Use components.html for reliable JavaScript execution
-        # Note: components.html doesn't support 'key' parameter
-        st.components.v1.html("""
-        <script>
-        (function() {
-            function focusInput() {
-                var inputs = document.querySelectorAll('input[type="text"]');
-                for (var i = 0; i < inputs.length; i++) {
-                    var placeholder = (inputs[i].getAttribute('placeholder') || '').toLowerCase();
-                    if (placeholder.indexOf('shop.markaz.app') !== -1 || placeholder.indexOf('product url') !== -1) {
-                        try {
-                            inputs[i].focus();
-                            inputs[i].select();
-                            inputs[i].scrollIntoView({ behavior: 'smooth', block: 'center' });
-                            return true;
-                        } catch(e) {
-                            console.log('Focus error:', e);
-                        }
-                    }
-                }
-                return false;
-            }
-            
-            // Try multiple times with delays to ensure input is rendered
-            setTimeout(focusInput, 100);
-            setTimeout(focusInput, 300);
-            setTimeout(focusInput, 600);
-            setTimeout(focusInput, 1000);
-            setTimeout(focusInput, 1500);
-        })();
-        </script>
-        """, height=0)
-        st.session_state.focus_url_input = False
-    
     # Add to List and Fetch Product Data Buttons (reordered)
     col1, col2 = st.columns(2)
     
@@ -1095,9 +1033,8 @@ def main():
                     # Add directly to products list
                     st.session_state.products.append(product_data)
                     
-                    # Clear URL input and set focus flag
+                    # Clear URL input
                     st.session_state.url_input_counter += 1
-                    st.session_state.focus_url_input = True
                     
                     # Show success message
                     st.success(f"✅ **Product Added Successfully!**\n\n**{product_data['title']}** has been added to your list with default pricing rules.")
@@ -1107,35 +1044,35 @@ def main():
         else:
             st.warning("Please enter a product URL")
     
-    # STEP 2: Display product details in compact 3-column layout
+    # STEP 2: Display product details in compact single-row 3-column layout
     if st.session_state.fetched_product_data:
         product_data = st.session_state.fetched_product_data
         
         st.divider()
         
-        # Create 3 columns: [2, 3, 4] ratio
-        col1, col2, col3 = st.columns([2, 3, 4])
+        # Create 3 columns: [3, 4, 5] ratio for single row layout
+        col1, col2, col3 = st.columns([3, 4, 5])
         
         # Column 1: Product Image
         with col1:
             if product_data.get('image_urls'):
                 st.image(product_data['image_urls'][0], width='stretch', caption="Product Image")
         
-        # Column 2: Product Details
+        # Column 2: Product Details (compact format)
         with col2:
-            st.write(f"**Title:** {product_data['title']}")
+            st.markdown(f"**Title:** {product_data['title']}")
             if product_data.get('base_sku'):
-                st.write(f"**Base SKU:** {product_data['base_sku']}")
+                st.markdown(f"**SKU:** {product_data['base_sku']}")
             if product_data.get('variants') and len(product_data['variants']) > 0:
                 variants_display = ', '.join(product_data['variants'])
-                st.write(f"**{product_data.get('option1_name', 'Size')}:** {variants_display}")
-            st.write(f"**Fetched Price:** Rs. {product_data['price']}")
+                st.markdown(f"**{product_data.get('option1_name', 'Size')}:** {variants_display}")
+            st.markdown(f"**Price:** Rs. {product_data['price']}")
         
-        # Column 3: Set Pricing section
+        # Column 3: Set Pricing section (all pricing inputs)
         with col3:
             # Show fetched price
             fetched_price = float(product_data.get('price', 0))
-            st.info(f"**Actual Fetched Price:** Rs. {fetched_price:,.2f}")
+            st.info(f"**Fetched Price:** Rs. {fetched_price:,.2f}")
             
             # Calculate default values based on previous pricing rules
             # Rule: If price < 2000, add 500; else add 1000
@@ -1157,7 +1094,7 @@ def main():
                 key="variant_price_adjustment"
             )
             final_variant_price = fetched_price + variant_adjustment
-            st.write(f"**Final Variant Price:** Rs. {final_variant_price:,.2f}")
+            st.markdown(f"**Final Variant:** Rs. {final_variant_price:,.2f}")
             
             # Compare At Price Adjustment (with default value from pricing rules)
             compare_at_adjustment = st.number_input(
@@ -1168,15 +1105,15 @@ def main():
                 key="compare_at_price_adjustment"
             )
             final_compare_at_price = fetched_price + compare_at_adjustment
-            st.write(f"**Final Compare At Price:** Rs. {final_compare_at_price:,.2f}")
+            st.markdown(f"**Final Compare At:** Rs. {final_compare_at_price:,.2f}")
         
         st.divider()
         
-        # Action buttons in separate row below (centered)
-        col1, col2, col3, col4, col5 = st.columns([1, 1, 2, 1, 1])
-        with col3:
+        # Action buttons in new row below (half-width each)
+        col1, col2 = st.columns(2)
+        with col1:
             add_to_list_button = st.button("✅ Add to List", type="primary", width='stretch', key="add_to_list")
-        with col4:
+        with col2:
             cancel_button = st.button("❌ Cancel", width='stretch', key="cancel_preview")
         
         # Handle "Add to List" button click
@@ -1197,7 +1134,6 @@ def main():
             
             # Increment counter to create new widget key (this clears the input)
             st.session_state.url_input_counter += 1
-            st.session_state.focus_url_input = True
             
             # Show success message
             st.success(f"✅ **Product Added Successfully!**\n\n**{product_to_add['title']}** has been added to your conversion list.")
