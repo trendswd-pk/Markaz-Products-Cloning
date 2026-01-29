@@ -874,6 +874,20 @@ def main():
     st.title("🛍️ Markaz to Shopify CSV Converter")
     st.markdown("Scrape Markaz product data and convert to Shopify-compatible CSV format.")
     
+    # Add custom CSS for modal-like popup
+    st.markdown("""
+    <style>
+    .modal-container {
+        background-color: rgba(0, 0, 0, 0.1);
+        padding: 20px;
+        border-radius: 10px;
+        border: 2px solid #1f77b4;
+        margin: 20px 0;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
     # Product URL input
     st.header("Add Product")
     url_input = st.text_input(
@@ -901,12 +915,20 @@ def main():
         else:
             st.warning("Please enter a product URL")
     
-    # Show product details in dialog/modal
+    # Show product details in modal-like popup
     if st.session_state.fetched_product_data and st.session_state.show_product_dialog:
         product_data = st.session_state.fetched_product_data
         
-        with st.dialog("📦 Product Details & Pricing"):
-            st.subheader("📦 Fetched Product Details")
+        # Create modal-like container with border and padding
+        st.markdown('<div class="modal-container">', unsafe_allow_html=True)
+        st.markdown("---")
+        
+        modal_container = st.container()
+        
+        with modal_container:
+            # Modal header
+            st.markdown("### 📦 Product Details & Pricing")
+            st.markdown("---")
             
             col1, col2 = st.columns([1, 1])
             
@@ -960,9 +982,9 @@ def main():
             # Add to List and Cancel buttons
             col1, col2 = st.columns([1, 1])
             with col1:
-                add_to_list_button = st.button("✅ Add to List", type="primary", use_container_width=True)
+                add_to_list_button = st.button("✅ Add to List", type="primary", use_container_width=True, key="modal_add_to_list")
             with col2:
-                cancel_button = st.button("❌ Cancel", use_container_width=True)
+                cancel_button = st.button("❌ Cancel", use_container_width=True, key="modal_cancel")
             
             if add_to_list_button:
                 # Create a copy of product data to avoid modifying the original
@@ -982,6 +1004,9 @@ def main():
             if cancel_button:
                 st.session_state.show_product_dialog = False
                 st.rerun()
+        
+        st.markdown("---")
+        st.markdown('</div>', unsafe_allow_html=True)
     
     st.divider()
     
