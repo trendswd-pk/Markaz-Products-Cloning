@@ -160,7 +160,11 @@ def launch_browser_for_serverless(playwright):
         '--disable-backgrounding-occluded-windows',
         '--disable-renderer-backgrounding',
         '--disable-features=TranslateUI',
-        '--disable-ipc-flooding-protection'
+        '--disable-ipc-flooding-protection',
+        '--disable-logging',
+        '--log-level=3',
+        '--disable-permissions-api',
+        '--disable-notifications'
     ]
     
     # Only use --single-process on Vercel (can cause issues on Streamlit Cloud)
@@ -170,7 +174,8 @@ def launch_browser_for_serverless(playwright):
     # Launch browser with serverless-optimized settings
     browser = playwright.chromium.launch(
         headless=True,  # Always headless in serverless
-        args=launch_args
+        args=launch_args,
+        ignore_default_args=['--enable-automation']
     )
     
     return browser
@@ -178,11 +183,26 @@ def launch_browser_for_serverless(playwright):
 def scrape_markaz_product(url):
     """Scrape product data from Markaz product URL using Playwright - Optimized for Vercel"""
     browser = None
+    context = None
     try:
         with sync_playwright() as p:
             # Use helper function to launch browser optimized for serverless
             browser = launch_browser_for_serverless(p)
-            page = browser.new_page()
+            
+            # Create browser context with permissions to suppress warnings
+            context = browser.new_context(
+                permissions=[],
+                ignore_https_errors=True,
+                viewport={'width': 1920, 'height': 1080}
+            )
+            
+            page = context.new_page()
+            
+            # Suppress console warnings about unrecognized features (like ambient-light-sensor)
+            def suppress_warnings(msg):
+                if 'Unrecognized feature' in msg.text or 'ambient-light-sensor' in msg.text:
+                    return  # Suppress these warnings silently
+            page.on('console', suppress_warnings)
             
             # Navigate to the page
             page.goto(url, wait_until='networkidle', timeout=30000)
