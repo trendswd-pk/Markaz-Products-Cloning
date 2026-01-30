@@ -5,6 +5,7 @@ import re
 import os
 import subprocess
 import copy
+import time
 from urllib.parse import urljoin
 from html import escape
 
@@ -19,13 +20,17 @@ st.set_page_config(
     layout="wide"
 )
 
-# Initialize session state
-if 'products' not in st.session_state:
-    st.session_state.products = []
+# Initialize session state (products_list at very top for multiple fetch)
+if 'products_list' not in st.session_state:
+    st.session_state.products_list = []
+if 'processed_urls' not in st.session_state:
+    st.session_state.processed_urls = set()  # URLs we've already added (avoid duplicates)
 if 'fetched_product_data' not in st.session_state:
     st.session_state.fetched_product_data = None
 if 'show_product_dialog' not in st.session_state:
     st.session_state.show_product_dialog = False
+if 'add_mode' not in st.session_state:
+    st.session_state.add_mode = 'multiple'  # default: multiple; 'single' = one URL, 'multiple' = bulk URLs
 
 def slugify(text):
     """Convert text to URL-friendly handle"""
@@ -55,7 +60,7 @@ def generate_unique_handle(title, base_sku):
         else:
             handle = base_sku_lower
     else:
-        handle = title_slug if title_slug else f"product-{len(st.session_state.products)}"
+        handle = title_slug if title_slug else f"product-{len(st.session_state.products_list)}"
     
     # Ensure handle is lowercase with hyphens only (no spaces or capital letters)
     handle = handle.lower()
@@ -180,377 +185,375 @@ def launch_browser_for_serverless(playwright):
     
     return browser
 
-def scrape_markaz_product(url):
-    """Scrape product data from Markaz product URL using Playwright - Optimized for Vercel"""
-    browser = None
-    context = None
+def scrape_product_from_page(page, url):
+    """
+    Scrape product data from an already-open Playwright page.
+    Used for bulk fetch so we reuse one browser and open a new context per URL.
+    """
+    def suppress_warnings(msg):
+        msg_text = msg.text if hasattr(msg, 'text') else str(msg)
+        if any(k in msg_text for k in ['Unrecognized feature', 'ambient-light-sensor', 'Permissions Policy', 'Feature Policy']):
+            return
+    page.on('console', suppress_warnings)
+    page.goto(url, wait_until='networkidle', timeout=30000)
     try:
-        with sync_playwright() as p:
-            # Use helper function to launch browser optimized for serverless
-            browser = launch_browser_for_serverless(p)
-            
-            # Create browser context with permissions to suppress warnings
-            context = browser.new_context(
-                permissions=[],
-                ignore_https_errors=True,
-                viewport={'width': 1920, 'height': 1080}
-            )
-            
-            page = context.new_page()
-            
-            # Suppress console warnings about unrecognized features (like ambient-light-sensor)
-            # This warning comes from the website's Permissions Policy, not our code
-            def suppress_warnings(msg):
-                msg_text = msg.text if hasattr(msg, 'text') else str(msg)
-                # Suppress Permissions Policy warnings
-                if any(keyword in msg_text for keyword in [
-                    'Unrecognized feature',
-                    'ambient-light-sensor',
-                    'Permissions Policy',
-                    'Feature Policy'
-                ]):
-                    return  # Suppress these warnings silently
-            page.on('console', suppress_warnings)
-            
-            # Navigate to the page
-            page.goto(url, wait_until='networkidle', timeout=30000)
-            
-            # Wait for spans with class 'ant-typography' to load (these contain title and SKU)
-            try:
-                page.wait_for_selector('span.ant-typography', timeout=10000)
-            except Exception as e:
-                browser.close()
-                return {
-                    'title': None,
-                    'description': None,
-                    'price': None,
-                    'image_urls': [],
-                    'sku': None,
-                    'url': url,
-                    'status': f'Error: Could not find product spans - {str(e)}'
-                }
-            
-            # Find the product div (parent of the spans with classes 'flex flex-col flex-wrap')
-            product_div = None
-            try:
-                # Get the first span and find its parent div with the classes
-                first_span = page.locator('span.ant-typography').first
-                # Find ancestor div with the specific classes
-                product_div = first_span.locator('xpath=ancestor::div[contains(@class, "flex") and contains(@class, "flex-col") and contains(@class, "flex-wrap")]').first
-                # Verify it exists
-                if product_div.count() == 0:
-                    # Fallback: try CSS selector
-                    product_div = page.locator("div.flex.flex-col.flex-wrap").first
-            except:
-                # Final fallback: use page locator
-                product_div = page.locator("div").filter(has=page.locator("span.ant-typography")).first
-            
-            # Extract Title from the second span with class 'ant-typography'
-            # First span is SKU, second span is Title
-            title = "Product Title Not Found"
-            sku = ""
-            try:
-                # Find all spans with class 'ant-typography' within the product div
-                if product_div:
-                    spans = product_div.locator('span.ant-typography').all()
-                else:
-                    spans = page.locator('span.ant-typography').all()
-                
-                if len(spans) >= 2:
-                    # First span is the SKU
-                    sku = spans[0].inner_text().strip()
-                    # Second span is the Title
-                    title = spans[1].inner_text().strip()
-                elif len(spans) == 1:
-                    # Only one span found, assume it's the title
-                    title = spans[0].inner_text().strip()
-            except Exception as e:
-                st.warning(f"Could not extract title/SKU: {str(e)}")
-            
-            # Extract price - find text containing 'Rs.' and extract the number immediately following it
-            price = "0.00"
-            try:
-                # Look for element containing 'Rs.'
-                price_elements = page.locator('*:has-text("Rs.")').all()
-                
-                for price_elem in price_elements:
-                    price_text = price_elem.inner_text()
-                    if 'Rs.' in price_text:
-                        # Use regex to find 'Rs.' followed by optional whitespace, then capture digits and commas
-                        # This ensures we only get the number immediately following 'Rs.'
-                        price_match = re.search(r'Rs\.\s*([\d,]+)', price_text, re.IGNORECASE)
-                        if price_match:
-                            # Remove commas from the extracted price string
-                            price = price_match.group(1).replace(',', '')
+        page.wait_for_selector('span.ant-typography', timeout=10000)
+    except Exception as e:
+        return {
+            'title': None, 'description': None, 'price': None, 'image_urls': [], 'sku': None,
+            'url': url, 'status': f'Error: Could not find product spans - {str(e)}'
+        }
+    # Find the product div (parent of the spans with classes 'flex flex-col flex-wrap')
+    product_div = None
+    try:
+        # Get the first span and find its parent div with the classes
+        first_span = page.locator('span.ant-typography').first
+        # Find ancestor div with the specific classes
+        product_div = first_span.locator('xpath=ancestor::div[contains(@class, "flex") and contains(@class, "flex-col") and contains(@class, "flex-wrap")]').first
+        # Verify it exists
+        if product_div.count() == 0:
+            # Fallback: try CSS selector
+            product_div = page.locator("div.flex.flex-col.flex-wrap").first
+    except:
+        # Final fallback: use page locator
+        product_div = page.locator("div").filter(has=page.locator("span.ant-typography")).first
+    
+    # Extract Title from the second span with class 'ant-typography'
+    # First span is SKU, second span is Title
+    title = "Product Title Not Found"
+    sku = ""
+    try:
+        # Find all spans with class 'ant-typography' within the product div
+        if product_div:
+            spans = product_div.locator('span.ant-typography').all()
+        else:
+            spans = page.locator('span.ant-typography').all()
+        
+        if len(spans) >= 2:
+            # First span is the SKU
+            sku = spans[0].inner_text().strip()
+            # Second span is the Title
+            title = spans[1].inner_text().strip()
+        elif len(spans) == 1:
+            # Only one span found, assume it's the title
+            title = spans[0].inner_text().strip()
+    except Exception as e:
+        st.warning(f"Could not extract title/SKU: {str(e)}")
+    
+    # Extract price - find text containing 'Rs.' and extract the number immediately following it
+    price = "0.00"
+    try:
+        # Look for element containing 'Rs.'
+        price_elements = page.locator('*:has-text("Rs.")').all()
+        
+        for price_elem in price_elements:
+            price_text = price_elem.inner_text()
+            if 'Rs.' in price_text:
+                # Use regex to find 'Rs.' followed by optional whitespace, then capture digits and commas
+                # This ensures we only get the number immediately following 'Rs.'
+                price_match = re.search(r'Rs\.\s*([\d,]+)', price_text, re.IGNORECASE)
+                if price_match:
+                    # Remove commas from the extracted price string
+                    price = price_match.group(1).replace(',', '')
+                    break
+        
+        # Fallback: search in the product div
+        if price == "0.00":
+            div_text = product_div.inner_text()
+            # Use regex to find 'Rs.' followed by optional whitespace, then capture digits and commas
+            price_match = re.search(r'Rs\.\s*([\d,]+)', div_text, re.IGNORECASE)
+            if price_match:
+                # Remove commas from the extracted price string
+                price = price_match.group(1).replace(',', '')
+        
+        # Final fallback: search entire page text
+        if price == "0.00":
+            page_text = page.inner_text('body')
+            price_match = re.search(r'Rs\.\s*([\d,]+)', page_text, re.IGNORECASE)
+            if price_match:
+                # Remove commas from the extracted price string
+                price = price_match.group(1).replace(',', '')
+    except Exception as e:
+        st.warning(f"Could not extract price: {str(e)}")
+    
+    # Extract breadcrumb navigation - STRICT: Target ONLY links main a[href*="/explore"]
+    # Split text by / and clean it
+    # Target: 'Marketplace', 'Beauty&Fashion', 'Cosmetics', 'Personal Care'
+    # Ignore: Anything that is not an <a> tag to avoid 'Followers' or 'Product counts'
+    breadcrumb_items = []
+    try:
+        # STRICT SELECTOR: Only get <a> tags from main that have href containing "/explore"
+        breadcrumb_links = page.locator('main a[href*="/explore"]').all()
+        
+        if breadcrumb_links:
+            # Extract text from each link (ONLY from <a> tags)
+            for link in breadcrumb_links:
+                try:
+                    # Get href to verify it contains "/explore"
+                    href = link.get_attribute('href') or ''
+                    
+                    # STRICT: Only process if href contains "/explore"
+                    if '/explore' not in href:
+                        continue
+                    
+                    # Get text content from the <a> tag ONLY
+                    link_text = link.inner_text().strip()
+                    
+                    # Skip if empty
+                    if not link_text:
+                        continue
+                    
+                    # Stop at product title - if this link text matches title, stop collecting
+                    if title:
+                        title_lower = title.lower()
+                        link_lower = link_text.lower()
+                        # If link text is part of title or title is part of link, stop
+                        if title_lower in link_lower or link_lower in title_lower:
                             break
-                
-                # Fallback: search in the product div
-                if price == "0.00":
-                    div_text = product_div.inner_text()
-                    # Use regex to find 'Rs.' followed by optional whitespace, then capture digits and commas
-                    price_match = re.search(r'Rs\.\s*([\d,]+)', div_text, re.IGNORECASE)
-                    if price_match:
-                        # Remove commas from the extracted price string
-                        price = price_match.group(1).replace(',', '')
-                
-                # Final fallback: search entire page text
-                if price == "0.00":
-                    page_text = page.inner_text('body')
-                    price_match = re.search(r'Rs\.\s*([\d,]+)', page_text, re.IGNORECASE)
-                    if price_match:
-                        # Remove commas from the extracted price string
-                        price = price_match.group(1).replace(',', '')
-            except Exception as e:
-                st.warning(f"Could not extract price: {str(e)}")
+                        # Also check if link text is very similar to title (product page link)
+                        if len(link_text) > 10 and title_lower[:20] in link_lower:
+                            break
+                    
+                    # Basic validation: Must contain letters (valid category names)
+                    if not re.search(r'[a-zA-Z]', link_text):
+                        continue
+                    
+                    # Block list: Skip if contains unwanted terms
+                    link_lower = link_text.lower()
+                    block_terms = ['followers', 'products', 'rs.', 'add to cart', 'cart', 'view all']
+                    
+                    should_skip = False
+                    for term in block_terms:
+                        if term in link_lower:
+                            should_skip = True
+                            break
+                    
+                    # Skip product/follower counts and prices
+                    if re.search(r'\d+\s*Products?', link_text, re.IGNORECASE):
+                        should_skip = True
+                    if re.search(r'\d+[KkMm]?\s*Followers?', link_text, re.IGNORECASE):
+                        should_skip = True
+                    if re.search(r'Rs\.?\s*\d+', link_text, re.IGNORECASE):
+                        should_skip = True
+                    
+                    # Add to breadcrumb if not skipped and not already in list
+                    if not should_skip and link_text not in breadcrumb_items:
+                        breadcrumb_items.append(link_text)
+                except Exception as e:
+                    # Skip this link if any error occurs
+                    continue
+        
+        # Clean breadcrumb items: Split by / and clean each item
+        if breadcrumb_items:
+            cleaned_items = []
+            for item in breadcrumb_items:
+                # Split by / if item contains /
+                if '/' in item:
+                    parts = re.split(r'\s*/\s*', item)
+                    for part in parts:
+                        part = part.strip()
+                        if part and part not in cleaned_items:
+                            cleaned_items.append(part)
+                else:
+                    if item not in cleaned_items:
+                        cleaned_items.append(item)
+            breadcrumb_items = cleaned_items
+        
+    except Exception as e:
+        st.warning(f"Could not extract breadcrumb: {str(e)}")
+    
+    # Extract description - text content under title/price, stop before 'Product Code:'
+    description = ""
+    product_code = ""
+    try:
+        # Get all text from the product div, excluding title, SKU, and price
+        div_text = product_div.inner_text()
+        lines = div_text.split('\n')
+        
+        description_parts = []
+        found_title = False
+        found_sku = False
+        found_price = False
+        found_product_code = False
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
             
-            # Extract breadcrumb navigation - STRICT: Target ONLY links main a[href*="/explore"]
-            # Split text by / and clean it
-            # Target: 'Marketplace', 'Beauty&Fashion', 'Cosmetics', 'Personal Care'
-            # Ignore: Anything that is not an <a> tag to avoid 'Followers' or 'Product counts'
-            breadcrumb_items = []
-            try:
-                # STRICT SELECTOR: Only get <a> tags from main that have href containing "/explore"
-                breadcrumb_links = page.locator('main a[href*="/explore"]').all()
-                
-                if breadcrumb_links:
-                    # Extract text from each link (ONLY from <a> tags)
-                    for link in breadcrumb_links:
-                        try:
-                            # Get href to verify it contains "/explore"
-                            href = link.get_attribute('href') or ''
-                            
-                            # STRICT: Only process if href contains "/explore"
-                            if '/explore' not in href:
-                                continue
-                            
-                            # Get text content from the <a> tag ONLY
-                            link_text = link.inner_text().strip()
-                            
-                            # Skip if empty
-                            if not link_text:
-                                continue
-                            
-                            # Stop at product title - if this link text matches title, stop collecting
-                            if title:
-                                title_lower = title.lower()
-                                link_lower = link_text.lower()
-                                # If link text is part of title or title is part of link, stop
-                                if title_lower in link_lower or link_lower in title_lower:
-                                    break
-                                # Also check if link text is very similar to title (product page link)
-                                if len(link_text) > 10 and title_lower[:20] in link_lower:
-                                    break
-                            
-                            # Basic validation: Must contain letters (valid category names)
-                            if not re.search(r'[a-zA-Z]', link_text):
-                                continue
-                            
-                            # Block list: Skip if contains unwanted terms
-                            link_lower = link_text.lower()
-                            block_terms = ['followers', 'products', 'rs.', 'add to cart', 'cart', 'view all']
-                            
-                            should_skip = False
-                            for term in block_terms:
-                                if term in link_lower:
-                                    should_skip = True
-                                    break
-                            
-                            # Skip product/follower counts and prices
-                            if re.search(r'\d+\s*Products?', link_text, re.IGNORECASE):
-                                should_skip = True
-                            if re.search(r'\d+[KkMm]?\s*Followers?', link_text, re.IGNORECASE):
-                                should_skip = True
-                            if re.search(r'Rs\.?\s*\d+', link_text, re.IGNORECASE):
-                                should_skip = True
-                            
-                            # Add to breadcrumb if not skipped and not already in list
-                            if not should_skip and link_text not in breadcrumb_items:
-                                breadcrumb_items.append(link_text)
-                        except Exception as e:
-                            # Skip this link if any error occurs
-                            continue
-                
-                # Clean breadcrumb items: Split by / and clean each item
-                if breadcrumb_items:
-                    cleaned_items = []
-                    for item in breadcrumb_items:
-                        # Split by / if item contains /
-                        if '/' in item:
-                            parts = re.split(r'\s*/\s*', item)
-                            for part in parts:
-                                part = part.strip()
-                                if part and part not in cleaned_items:
-                                    cleaned_items.append(part)
-                        else:
-                            if item not in cleaned_items:
-                                cleaned_items.append(item)
-                    breadcrumb_items = cleaned_items
-                
-            except Exception as e:
-                st.warning(f"Could not extract breadcrumb: {str(e)}")
+            # Skip SKU (first span)
+            if not found_sku and line == sku:
+                found_sku = True
+                continue
             
-            # Extract description - text content under title/price, stop before 'Product Code:'
-            description = ""
-            product_code = ""
-            try:
-                # Get all text from the product div, excluding title, SKU, and price
-                div_text = product_div.inner_text()
-                lines = div_text.split('\n')
-                
-                description_parts = []
-                found_title = False
-                found_sku = False
-                found_price = False
-                found_product_code = False
-                
-                for line in lines:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    
-                    # Skip SKU (first span)
-                    if not found_sku and line == sku:
-                        found_sku = True
-                        continue
-                    
-                    # Skip title (second span)
-                    if not found_title and line == title:
-                        found_title = True
-                        continue
-                    
-                    # Skip price
-                    if not found_price and re.search(r'Rs\.\s*[\d,]+', line, re.IGNORECASE):
-                        found_price = True
-                        continue
-                    
-                    # Skip if it's just the price number
-                    if re.match(r'^[\d,]+(?:\.\d+)?$', line):
-                        continue
-                    
-                    # Check for 'Product Code:' - extract value and stop description collection
-                    if 'Product Code:' in line or 'product code:' in line.lower():
-                        found_product_code = True
-                        # Extract the value after 'Product Code:'
-                        code_match = re.search(r'Product Code:\s*(.+)', line, re.IGNORECASE)
-                        if code_match:
-                            product_code = code_match.group(1).strip()
-                        # Stop collecting description at this point
-                        break
-                    
-                    # Collect description text after we've found title and price, but before Product Code
-                    if found_title and found_price and not found_product_code and len(line) > 5:
-                        # Skip navigation, buttons, etc.
-                        if line.lower() not in ['add to cart', 'buy now', 'description', 'details', 'sku']:
-                            description_parts.append(line)
-                
-                description = '\n'.join(description_parts)
-                
-                # If no description found or Product Code not found in lines, try finding description containers
-                if (not description or len(description) < 20) or not product_code:
-                    desc_selectors = [
-                        '[class*="description"]',
-                        '[class*="Description"]',
-                        '[class*="detail"]',
-                        '[class*="Detail"]',
-                        'p',
-                    ]
-                    
-                    for selector in desc_selectors:
-                        try:
-                            desc_elements = page.locator(selector).all()
-                            for elem in desc_elements[:10]:  # Check first 10
-                                text = elem.inner_text().strip()
-                                
-                                # Check for Product Code in this text
-                                if 'Product Code:' in text or 'product code:' in text.lower():
-                                    # Split at Product Code
-                                    parts = re.split(r'Product Code:', text, flags=re.IGNORECASE)
-                                    if len(parts) > 1:
-                                        # Everything before Product Code is description
-                                        description = parts[0].strip()
-                                        # Extract Product Code value
-                                        code_match = re.search(r'Product Code:\s*(.+)', text, re.IGNORECASE)
-                                        if code_match:
-                                            product_code = code_match.group(1).strip()
-                                        break
-                                elif (text and len(text) > 20 and 
-                                      text != title and 
-                                      text != sku and
-                                      not re.search(r'Rs\.\s*[\d,]+', text, re.IGNORECASE) and
-                                      text.lower() not in ['add to cart', 'buy now']):
-                                    if not description:
-                                        description = text
-                                    else:
-                                        # Append if it's different content
-                                        if text not in description:
-                                            description += '\n' + text
-                                    break
-                            if description and len(description) > 50:
+            # Skip title (second span)
+            if not found_title and line == title:
+                found_title = True
+                continue
+            
+            # Skip price
+            if not found_price and re.search(r'Rs\.\s*[\d,]+', line, re.IGNORECASE):
+                found_price = True
+                continue
+            
+            # Skip if it's just the price number
+            if re.match(r'^[\d,]+(?:\.\d+)?$', line):
+                continue
+            
+            # Check for 'Product Code:' - extract value and stop description collection
+            if 'Product Code:' in line or 'product code:' in line.lower():
+                found_product_code = True
+                # Extract the value after 'Product Code:'
+                code_match = re.search(r'Product Code:\s*(.+)', line, re.IGNORECASE)
+                if code_match:
+                    product_code = code_match.group(1).strip()
+                # Stop collecting description at this point
+                break
+            
+            # Collect description text after we've found title and price, but before Product Code
+            if found_title and found_price and not found_product_code and len(line) > 5:
+                # Skip navigation, buttons, etc.
+                if line.lower() not in ['add to cart', 'buy now', 'description', 'details', 'sku']:
+                    description_parts.append(line)
+        
+        description = '\n'.join(description_parts)
+        
+        # If no description found or Product Code not found in lines, try finding description containers
+        if (not description or len(description) < 20) or not product_code:
+            desc_selectors = [
+                '[class*="description"]',
+                '[class*="Description"]',
+                '[class*="detail"]',
+                '[class*="Detail"]',
+                'p',
+            ]
+            
+            for selector in desc_selectors:
+                try:
+                    desc_elements = page.locator(selector).all()
+                    for elem in desc_elements[:10]:  # Check first 10
+                        text = elem.inner_text().strip()
+                        
+                        # Check for Product Code in this text
+                        if 'Product Code:' in text or 'product code:' in text.lower():
+                            # Split at Product Code
+                            parts = re.split(r'Product Code:', text, flags=re.IGNORECASE)
+                            if len(parts) > 1:
+                                # Everything before Product Code is description
+                                description = parts[0].strip()
+                                # Extract Product Code value
+                                code_match = re.search(r'Product Code:\s*(.+)', text, re.IGNORECASE)
+                                if code_match:
+                                    product_code = code_match.group(1).strip()
                                 break
+                        elif (text and len(text) > 20 and 
+                              text != title and 
+                              text != sku and
+                              not re.search(r'Rs\.\s*[\d,]+', text, re.IGNORECASE) and
+                              text.lower() not in ['add to cart', 'buy now']):
+                            if not description:
+                                description = text
+                            else:
+                                # Append if it's different content
+                                if text not in description:
+                                    description += '\n' + text
+                            break
+                    if description and len(description) > 50:
+                        break
+                except:
+                    continue
+        
+        # If still no Product Code found, try searching the entire page
+        if not product_code:
+            page_text = page.inner_text('body')
+            code_match = re.search(r'Product Code:\s*([A-Z0-9]+)', page_text, re.IGNORECASE)
+            if code_match:
+                product_code = code_match.group(1).strip()
+        
+        if not description or len(description) < 10:
+            description = "No description available"
+    except Exception as e:
+        description = "No description available"
+        st.warning(f"Could not extract description: {str(e)}")
+    
+    # Extract Base SKU: alphanumeric code immediately following 'Product Code:'
+    base_sku = ""
+    if product_code:
+        # Extract only alphanumeric characters (e.g., MZ51500000049KSAA)
+        base_sku_match = re.search(r'([A-Z0-9]+)', product_code, re.IGNORECASE)
+        if base_sku_match:
+            base_sku = base_sku_match.group(1).strip()
+    
+    if not base_sku:
+        base_sku = sku if sku else ""
+    
+    # Extract variants using exact HTML structure
+    # Target Container: Look for the div that contains a span with the text 'Size :'
+    option1_name = 'Title'
+    variants = []  # List to store all variant values
+    
+    try:
+        # Find the div that contains a span with text 'Size :'
+        size_container = None
+        try:
+            # Find span with text 'Size :'
+            size_span = page.locator('span:has-text("Size :")').first
+            if size_span.count() > 0:
+                # Find the parent div that contains this span
+                size_container = size_span.locator('xpath=ancestor::div[1]').first
+                if size_container.count() == 0:
+                    # Try alternative: get parent of parent
+                    size_container = size_span.locator('xpath=ancestor::div').first
+        except:
+            pass
+        
+        # If Size container found, extract variants from buttons
+        if size_container and size_container.count() > 0:
+            try:
+                # Inside that div, find all button elements
+                button_elements = size_container.locator('button').all()
+                
+                # From each button, extract the text inside the span with class 'ant-typography'
+                for button in button_elements:
+                    try:
+                        # Find span with class 'ant-typography' inside the button
+                        typography_span = button.locator('span.ant-typography').first
+                        if typography_span.count() > 0:
+                            variant_text = typography_span.inner_text().strip()
+                            if variant_text and variant_text not in variants:
+                                variants.append(variant_text)
+                    except:
+                        # Fallback: get button text directly if no ant-typography span found
+                        try:
+                            button_text = button.inner_text().strip()
+                            if button_text and button_text not in variants:
+                                variants.append(button_text)
                         except:
                             continue
                 
-                # If still no Product Code found, try searching the entire page
-                if not product_code:
-                    page_text = page.inner_text('body')
-                    code_match = re.search(r'Product Code:\s*([A-Z0-9]+)', page_text, re.IGNORECASE)
-                    if code_match:
-                        product_code = code_match.group(1).strip()
-                
-                if not description or len(description) < 10:
-                    description = "No description available"
+                # If buttons found, set option name to 'Size'
+                if variants:
+                    option1_name = 'Size'
             except Exception as e:
-                description = "No description available"
-                st.warning(f"Could not extract description: {str(e)}")
-            
-            # Extract Base SKU: alphanumeric code immediately following 'Product Code:'
-            base_sku = ""
-            if product_code:
-                # Extract only alphanumeric characters (e.g., MZ51500000049KSAA)
-                base_sku_match = re.search(r'([A-Z0-9]+)', product_code, re.IGNORECASE)
-                if base_sku_match:
-                    base_sku = base_sku_match.group(1).strip()
-            
-            if not base_sku:
-                base_sku = sku if sku else ""
-            
-            # Extract variants using exact HTML structure
-            # Target Container: Look for the div that contains a span with the text 'Size :'
-            option1_name = 'Title'
-            variants = []  # List to store all variant values
-            
+                st.warning(f"Error extracting variants from Size container: {str(e)}")
+        
+        # If no Size container found, check for Color
+        if not variants:
             try:
-                # Find the div that contains a span with text 'Size :'
-                size_container = None
-                try:
-                    # Find span with text 'Size :'
-                    size_span = page.locator('span:has-text("Size :")').first
-                    if size_span.count() > 0:
-                        # Find the parent div that contains this span
-                        size_container = size_span.locator('xpath=ancestor::div[1]').first
-                        if size_container.count() == 0:
-                            # Try alternative: get parent of parent
-                            size_container = size_span.locator('xpath=ancestor::div').first
-                except:
-                    pass
-                
-                # If Size container found, extract variants from buttons
-                if size_container and size_container.count() > 0:
-                    try:
-                        # Inside that div, find all button elements
-                        button_elements = size_container.locator('button').all()
+                color_span = page.locator('span:has-text("Color :")').first
+                if color_span.count() > 0:
+                    color_container = color_span.locator('xpath=ancestor::div[1]').first
+                    if color_container.count() > 0:
+                        button_elements = color_container.locator('button').all()
                         
-                        # From each button, extract the text inside the span with class 'ant-typography'
                         for button in button_elements:
                             try:
-                                # Find span with class 'ant-typography' inside the button
                                 typography_span = button.locator('span.ant-typography').first
                                 if typography_span.count() > 0:
                                     variant_text = typography_span.inner_text().strip()
                                     if variant_text and variant_text not in variants:
                                         variants.append(variant_text)
                             except:
-                                # Fallback: get button text directly if no ant-typography span found
                                 try:
                                     button_text = button.inner_text().strip()
                                     if button_text and button_text not in variants:
@@ -558,135 +561,116 @@ def scrape_markaz_product(url):
                                 except:
                                     continue
                         
-                        # If buttons found, set option name to 'Size'
                         if variants:
-                            option1_name = 'Size'
-                    except Exception as e:
-                        st.warning(f"Error extracting variants from Size container: {str(e)}")
-                
-                # If no Size container found, check for Color
-                if not variants:
-                    try:
-                        color_span = page.locator('span:has-text("Color :")').first
-                        if color_span.count() > 0:
-                            color_container = color_span.locator('xpath=ancestor::div[1]').first
-                            if color_container.count() > 0:
-                                button_elements = color_container.locator('button').all()
-                                
-                                for button in button_elements:
-                                    try:
-                                        typography_span = button.locator('span.ant-typography').first
-                                        if typography_span.count() > 0:
-                                            variant_text = typography_span.inner_text().strip()
-                                            if variant_text and variant_text not in variants:
-                                                variants.append(variant_text)
-                                    except:
-                                        try:
-                                            button_text = button.inner_text().strip()
-                                            if button_text and button_text not in variants:
-                                                variants.append(button_text)
-                                        except:
-                                            continue
-                                
-                                if variants:
-                                    option1_name = 'Color'
-                    except:
-                        pass
-                
-            except Exception as e:
-                st.warning(f"Could not extract variants: {str(e)}")
-            
-            # Default Case: If no 'Size :' container is found, set Option1 Name to 'Title' and Option1 Value to 'Default Title'
-            if not variants:
-                variants = ['Default Title']
-                option1_name = 'Title'
-            
-            # Extract images from thumbnail gallery
-            image_urls = []
+                            option1_name = 'Color'
+            except:
+                pass
+        
+    except Exception as e:
+        st.warning(f"Could not extract variants: {str(e)}")
+    
+    # Default Case: If no 'Size :' container is found, set Option1 Name to 'Title' and Option1 Value to 'Default Title'
+    if not variants:
+        variants = ['Default Title']
+        option1_name = 'Title'
+    
+    # Extract images from thumbnail gallery
+    image_urls = []
+    try:
+        # Look for images in gallery/thumbnail containers
+        img_selectors = [
+            '[class*="gallery"] img',
+            '[class*="thumbnail"] img',
+            '[class*="image"] img',
+            '[class*="Image"] img',
+            '.product-image img',
+            '.product-images img',
+        ]
+        
+        for selector in img_selectors:
             try:
-                # Look for images in gallery/thumbnail containers
-                img_selectors = [
-                    '[class*="gallery"] img',
-                    '[class*="thumbnail"] img',
-                    '[class*="image"] img',
-                    '[class*="Image"] img',
-                    '.product-image img',
-                    '.product-images img',
-                ]
-                
-                for selector in img_selectors:
-                    try:
-                        img_elements = page.locator(selector).all()
-                        for img in img_elements:
-                            # Get src attribute
-                            src = img.get_attribute('src')
-                            if not src:
-                                src = img.get_attribute('data-src')
-                            if not src:
-                                src = img.get_attribute('data-lazy-src')
-                            
-                            if src:
-                                # Convert relative URLs to absolute
-                                if not src.startswith('http'):
-                                    src = urljoin(url, src)
-                                
-                                # Filter out logos, icons, placeholders
-                                if src not in image_urls and not any(skip in src.lower() for skip in ['logo', 'icon', 'avatar', 'placeholder', 'loading']):
-                                    image_urls.append(src)
+                img_elements = page.locator(selector).all()
+                for img in img_elements:
+                    # Get src attribute
+                    src = img.get_attribute('src')
+                    if not src:
+                        src = img.get_attribute('data-src')
+                    if not src:
+                        src = img.get_attribute('data-lazy-src')
+                    
+                    if src:
+                        # Convert relative URLs to absolute
+                        if not src.startswith('http'):
+                            src = urljoin(url, src)
                         
-                        if image_urls:
-                            break
-                    except:
-                        continue
+                        # Filter out logos, icons, placeholders
+                        if src not in image_urls and not any(skip in src.lower() for skip in ['logo', 'icon', 'avatar', 'placeholder', 'loading']):
+                            image_urls.append(src)
                 
-                # If no images found, try all img tags
-                if not image_urls:
-                    all_imgs = page.locator('img').all()
-                    for img in all_imgs[:10]:  # Limit to first 10
-                        src = img.get_attribute('src')
-                        if src and not any(skip in src.lower() for skip in ['logo', 'icon', 'avatar', 'placeholder', 'loading']):
-                            if not src.startswith('http'):
-                                src = urljoin(url, src)
-                            if src not in image_urls:
-                                image_urls.append(src)
-            except Exception as e:
-                st.warning(f"Could not extract images: {str(e)}")
-            
-            # Prepare return data
-            result = {
-                'title': title,
-                'description': description,
-                'price': price,
-                'image_urls': image_urls,
-                'base_sku': base_sku,
-                'variants': variants,  # List of all variant values
-                'option1_name': option1_name,
-                'breadcrumb_items': breadcrumb_items,  # List of breadcrumb items
-                'url': url,
-                'status': 'success'
-            }
-            
-            return result
-            
+                if image_urls:
+                    break
+            except:
+                continue
+        
+        # If no images found, try all img tags
+        if not image_urls:
+            all_imgs = page.locator('img').all()
+            for img in all_imgs[:10]:  # Limit to first 10
+                src = img.get_attribute('src')
+                if src and not any(skip in src.lower() for skip in ['logo', 'icon', 'avatar', 'placeholder', 'loading']):
+                    if not src.startswith('http'):
+                        src = urljoin(url, src)
+                    if src not in image_urls:
+                        image_urls.append(src)
+    except Exception as e:
+        st.warning(f"Could not extract images: {str(e)}")
+    
+    # Prepare return data
+    result = {
+        'title': title,
+        'description': description,
+        'price': price,
+        'image_urls': image_urls,
+        'base_sku': base_sku,
+        'variants': variants,  # List of all variant values
+        'option1_name': option1_name,
+        'breadcrumb_items': breadcrumb_items,  # List of breadcrumb items
+        'url': url,
+        'status': 'success'
+    }
+    
+    return result
+
+def scrape_markaz_product(url):
+    """Scrape product data from Markaz product URL. Opens browser, creates context and page, calls scrape_product_from_page, then closes."""
+    browser = None
+    context = None
+    try:
+        with sync_playwright() as p:
+            browser = launch_browser_for_serverless(p)
+            context = browser.new_context(
+                permissions=[],
+                ignore_https_errors=True,
+                viewport={'width': 1920, 'height': 1080}
+            )
+            page = context.new_page()
+            return scrape_product_from_page(page, url)
     except Exception as e:
         return {
-            'title': None,
-            'description': None,
-            'price': None,
-            'image_urls': [],
-            'base_sku': None,
-            'variants': ['Default Title'],
-            'option1_name': 'Title',
-            'breadcrumb_items': [],
-            'url': url,
-            'status': f'Error: {str(e)}'
+            'title': None, 'description': None, 'price': None, 'image_urls': [],
+            'base_sku': None, 'variants': ['Default Title'], 'option1_name': 'Title',
+            'breadcrumb_items': [], 'url': url, 'status': f'Error: {str(e)}'
         }
     finally:
-        # Memory Management: Force browser.close() in finally block to ensure memory is released immediately
+        if context:
+            try:
+                context.close()
+            except Exception:
+                pass
         if browser:
             try:
                 browser.close()
-            except:
+            except Exception:
                 pass
 
 def create_shopify_row(product, variant_value="", image_url="", image_position="", is_variant_row=False, is_first_variant=False):
@@ -917,19 +901,46 @@ def main():
     </style>
     """, unsafe_allow_html=True)
     
-    # Product URL input
-    st.header("Add Product")
+    # Pehle 2 col = title, 3rd col = Single, 4th col = Multiple, baaki merge/empty — sab left pe pass pass
+    c_title, c_single, c_multi, c_empty = st.columns([2, 1, 1, 6])
+    with c_title:
+        st.subheader("Add Products")
+    with c_single:
+        btn_single = st.button("Single", key="mode_single", help="Fetch one product at a time")
+    with c_multi:
+        btn_multi = st.button("Multiple", key="mode_multiple", help="Fetch multiple products (paste many URLs)")
+    with c_empty:
+        pass  # baaki empty — text aur buttons left side pe hi
+    if btn_single:
+        st.session_state.add_mode = "single"
+        st.rerun()
+    if btn_multi:
+        st.session_state.add_mode = "multiple"
+        st.rerun()
+    # Show current mode hint
+    if st.session_state.add_mode == "single":
+        st.caption("Single product mode — enter one URL below.")
+    else:
+        st.caption("Multiple products mode — paste one URL per line below.")
     # Initialize URL input counter for unique keys
     if 'url_input_counter' not in st.session_state:
         st.session_state.url_input_counter = 0
+    # Input: single line (Single mode) or text area (Multiple mode)
+    if st.session_state.add_mode == "single":
+        url_input = st.text_input(
+            "Product URL",
+            placeholder="https://www.shop.markaz.app/explore/product/...",
+            key=f"product_url_input_{st.session_state.url_input_counter}"
+        )
+    else:
+        url_input = st.text_area(
+            "Paste Multiple Product URLs (One per line)",
+            placeholder="https://www.shop.markaz.app/explore/product/...\nhttps://www.shop.markaz.app/explore/product/...",
+            key=f"product_url_input_{st.session_state.url_input_counter}",
+            height=120
+        )
     
-    url_input = st.text_input(
-        "Product URL",
-        placeholder="https://www.shop.markaz.app/explore/product/...",
-        key=f"product_url_input_{st.session_state.url_input_counter}"
-    )
-    
-    # Add Enter key listener to trigger Add to List button
+    # Add Enter key listener to trigger Add to List button (for single-line paste)
     st.markdown("""
     <script>
     (function() {
@@ -978,71 +989,114 @@ def main():
     </script>
     """, unsafe_allow_html=True)
     
-    # Add to List and Fetch Product Data Buttons (reordered)
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        # Quick Add to List button (fetch and add directly with default pricing)
+    # Buttons: Single mode = Add to List + Fetch Product Data; Multiple mode = sirf Add to List
+    if st.session_state.add_mode == "single":
+        col1, col2 = st.columns(2)
+        with col1:
+            quick_add_button = st.button("✅ Add to List", type="primary", width='stretch', key="quick_add_button")
+        with col2:
+            fetch_button = st.button("📥 Fetch Product Data", type="secondary", width='stretch')
+    else:
         quick_add_button = st.button("✅ Add to List", type="primary", width='stretch', key="quick_add_button")
-    
-    with col2:
-        # STEP 1: Fetch product data (DO NOT add to list immediately)
-        fetch_button = st.button("📥 Fetch Product Data", type="secondary", width='stretch')
-    
-    if fetch_button:
-        if url_input:
-            with st.spinner("Scraping product data... This may take a few seconds."):
-                product_data = scrape_markaz_product(url_input)
-                
-                if product_data['status'] == 'success':
-                    # Store fetched data in session state (temporary, not yet in main list)
-                    st.session_state.fetched_product_data = product_data
-                    st.session_state.show_product_dialog = True
-                    st.rerun()
-                else:
-                    st.error(f"❌ Failed to scrape: {product_data['status']}")
-                    # Clear session state on failure
-                    st.session_state.fetched_product_data = None
-                    st.session_state.show_product_dialog = False
+        fetch_button = False
+
+    if fetch_button and url_input and st.session_state.add_mode == "single":
+        # Single mode: fetch one URL and show preview (changes list me ja kr karein)
+        with st.spinner("Fetching product data..."):
+            product_data = scrape_markaz_product(url_input.strip())
+        if product_data.get("status") == "success":
+            st.session_state.fetched_product_data = product_data
+            st.session_state.show_product_dialog = True
+            st.rerun()
         else:
-            st.warning("Please enter a product URL")
-    
+            st.error(f"Failed to fetch: {product_data.get('status', 'Unknown error')}")
+
     if quick_add_button:
-        if url_input:
-            with st.spinner("Fetching and adding product to list... This may take a few seconds."):
-                product_data = scrape_markaz_product(url_input)
-                
-                if product_data['status'] == 'success':
-                    # Calculate default pricing rules
-                    fetched_price = float(product_data.get('price', 0))
-                    
-                    # Default pricing rules: If price < 2000, add 500; else add 1000
-                    if fetched_price < 2000:
-                        default_variant_adjustment = 500.0
-                    else:
-                        default_variant_adjustment = 1000.0
-                    
-                    # Compare At Price = Variant Price + 1500
-                    # So adjustment = Variant Adjustment + 1500
-                    default_compare_at_adjustment = default_variant_adjustment + 1500.0
-                    
-                    # Apply default pricing adjustments
-                    product_data['variant_price_adjustment'] = default_variant_adjustment
-                    product_data['compare_at_price_adjustment'] = default_compare_at_adjustment
-                    
-                    # Add directly to products list
-                    st.session_state.products.append(product_data)
-                    
-                    # Clear URL input
-                    st.session_state.url_input_counter += 1
-                    
-                    # Show success message
-                    st.success(f"✅ **Product Added Successfully!**\n\n**{product_data['title']}** has been added to your list with default pricing rules.")
-                    st.rerun()
-                else:
-                    st.error(f"❌ Failed to scrape: {product_data['status']}")
+        if st.session_state.add_mode == "multiple":
+            # Multiple mode: sirf Add to List — bulk fetch aur sab list me add
+            links = [l.strip() for l in (url_input or "").split('\n') if l.strip()]
+            if not links:
+                st.warning("Please enter at least one product URL")
+            else:
+                total = len(links)
+                progress_bar = st.progress(0.0, text="Starting...")
+                status_container = st.empty()
+                added_count = 0
+                with sync_playwright() as p:
+                    browser = launch_browser_for_serverless(p)
+                    for i, link in enumerate(links):
+                        status_container.caption(f"**Link {i + 1} of {total}** — fetching...")
+                        progress_bar.progress((i + 1) / total, text=f"Link {i + 1} of {total}")
+                        if link in st.session_state.processed_urls:
+                            st.warning(f"⚠️ Skipped (already added): {link[:60]}...")
+                            continue
+                        context = None
+                        try:
+                            context = browser.new_context(
+                                permissions=[],
+                                ignore_https_errors=True,
+                                viewport={'width': 1920, 'height': 1080}
+                            )
+                            page = context.new_page()
+                            new_product_data = scrape_product_from_page(page, link)
+                            if new_product_data.get("status") == "success":
+                                fetched_price = float(new_product_data.get("price", 0))
+                                if fetched_price < 2000:
+                                    default_variant_adjustment = 500.0
+                                else:
+                                    default_variant_adjustment = 1000.0
+                                default_compare_at_adjustment = default_variant_adjustment + 1500.0
+                                new_product_data["variant_price_adjustment"] = default_variant_adjustment
+                                new_product_data["compare_at_price_adjustment"] = default_compare_at_adjustment
+                                st.session_state.products_list.append(new_product_data)
+                                st.session_state.processed_urls.add(link)
+                                added_count += 1
+                            else:
+                                st.warning(f"⚠️ Skipped (failed): {link[:60]}... — {new_product_data.get('status', 'Unknown error')}")
+                        except Exception as e:
+                            st.warning(f"⚠️ Skipped (error): {link[:60]}... — {str(e)}")
+                        finally:
+                            if context:
+                                try:
+                                    context.close()
+                                except Exception:
+                                    pass
+                        if i < total - 1:
+                            time.sleep(1)
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
+                progress_bar.progress(1.0, text="Done.")
+                status_container.caption("Finished.")
+                st.success(f"✅ **Bulk fetch complete.** Added **{added_count}** product(s) to the list (of {total} URL(s) processed).")
+                if added_count < total:
+                    st.info(f"{total - added_count} URL(s) were skipped (duplicates or errors).")
+                st.rerun()
         else:
-            st.warning("Please enter a product URL")
+            # Single mode: first URL add to list
+            first_url = (url_input or "").strip().split('\n')[0].strip() if url_input else ""
+            if first_url:
+                with st.spinner("Fetching and adding product to list... This may take a few seconds."):
+                    product_data = scrape_markaz_product(first_url)
+                    if product_data['status'] == 'success':
+                        fetched_price = float(product_data.get('price', 0))
+                        if fetched_price < 2000:
+                            default_variant_adjustment = 500.0
+                        else:
+                            default_variant_adjustment = 1000.0
+                        default_compare_at_adjustment = default_variant_adjustment + 1500.0
+                        product_data['variant_price_adjustment'] = default_variant_adjustment
+                        product_data['compare_at_price_adjustment'] = default_compare_at_adjustment
+                        st.session_state.products_list.append(product_data)
+                        st.session_state.processed_urls.add(first_url)
+                        st.session_state.url_input_counter += 1
+                        st.success(f"✅ **Product Added Successfully!**\n\n**{product_data['title']}** has been added to your list with default pricing rules.")
+                        st.rerun()
+                    else:
+                        st.error(f"❌ Failed to scrape: {product_data['status']}")
+            else:
+                st.warning("Please enter at least one product URL")
     
     # STEP 2: Display product details in compact single-row 3-column layout
     if st.session_state.fetched_product_data:
@@ -1125,8 +1179,10 @@ def main():
             product_to_add['variant_price_adjustment'] = variant_adjustment
             product_to_add['compare_at_price_adjustment'] = compare_at_adjustment
             
-            # Add product to the main conversion list (st.session_state.products)
-            st.session_state.products.append(product_to_add)
+            # Add product to the main conversion list (st.session_state.products_list)
+            st.session_state.products_list.append(product_to_add)
+            if product_to_add.get("url"):
+                st.session_state.processed_urls.add(product_to_add["url"])
             
             # Clear fetched data from session state (preview section clears)
             st.session_state.fetched_product_data = None
@@ -1151,11 +1207,11 @@ def main():
     st.divider()
     
     # Product list display
-    if st.session_state.products:
-        st.header(f"Product List ({len(st.session_state.products)} products)")
+    if st.session_state.products_list:
+        st.header(f"Product List ({len(st.session_state.products_list)} products)")
         
         # Display products
-        for idx, product in enumerate(st.session_state.products):
+        for idx, product in enumerate(st.session_state.products_list):
             # Initialize edit state for each product
             edit_key = f"edit_{idx}"
             if edit_key not in st.session_state:
@@ -1242,7 +1298,7 @@ def main():
                         st.rerun()
                 with col2:
                     if st.button(f"🗑️ Remove Product {idx + 1}", key=f"remove_{idx}", width='stretch'):
-                        st.session_state.products.pop(idx)
+                        st.session_state.products_list.pop(idx)
                         st.rerun()
         
         st.divider()
@@ -1269,7 +1325,7 @@ def main():
         
         # Convert all products to Shopify format
         all_rows = []
-        for product in st.session_state.products:
+        for product in st.session_state.products_list:
             rows = format_for_shopify(product)
             all_rows.extend(rows)
         
@@ -1303,7 +1359,8 @@ def main():
         
         # Clear all button
         if st.button("Clear All Products", type="secondary"):
-            st.session_state.products = []
+            st.session_state.products_list = []
+            st.session_state.processed_urls = set()
             st.rerun()
     else:
         st.info("👈 Enter a product URL above and click 'Add to List' to get started!")
