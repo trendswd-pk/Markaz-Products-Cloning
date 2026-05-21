@@ -1,7 +1,4 @@
-# Requirements for Streamlit Community Cloud
-# All dependencies used in app.py
-
+# Streamlit Cloud — app.py only (no test deps)
 streamlit>=1.32.0,<2.0.0
 playwright>=1.40.0,<2.0.0
-pytest-playwright>=0.4.0,<1.0.0
 pandas>=2.0.0,<3.0.0

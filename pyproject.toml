@@ -1,7 +1,7 @@
 [project]
 name = "markaz-scraper"
 version = "0.1.0"
-requires-python = ">=3.12"
+requires-python = ">=3.11"
 description = "Markaz product scraper - Ultra-minimal for Vercel (Playwright only)"
 dependencies = [
     "playwright==1.40.0"
