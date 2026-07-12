@@ -8,6 +8,13 @@ import time
 from html import escape
 
 from markaz_scraper import launch_browser_for_serverless, scrape_product_from_page, scrape_markaz_product
+from supabase_config import is_supabase_configured
+from supabase_store import (
+    delete_tracked_product,
+    list_tracked_products,
+    update_tracked_stock_status,
+    upsert_tracked_product,
+)
 
 # Playwright Browser Installation: Install chromium browser if missing
 # This ensures browser is available when app runs on Streamlit Cloud
@@ -31,6 +38,8 @@ if 'show_product_dialog' not in st.session_state:
     st.session_state.show_product_dialog = False
 if 'add_mode' not in st.session_state:
     st.session_state.add_mode = 'multiple'  # default: multiple; 'single' = one URL, 'multiple' = bulk URLs
+if 'converter_import_message' not in st.session_state:
+    st.session_state.converter_import_message = None
 
 def slugify(text):
     """Convert text to URL-friendly handle"""
@@ -47,7 +56,7 @@ def slugify(text):
     # Remove leading/trailing hyphens
     return text.strip('-')
 
-def generate_unique_handle(title, base_sku):
+def generate_unique_handle(title, base_sku, fallback_index=0):
     """Generate unique handle by combining slugified title with base SKU"""
     # Slugify the title
     title_slug = slugify(title) if title else ""
@@ -60,7 +69,7 @@ def generate_unique_handle(title, base_sku):
         else:
             handle = base_sku_lower
     else:
-        handle = title_slug if title_slug else f"product-{len(st.session_state.products_list)}"
+        handle = title_slug if title_slug else f"product-{fallback_index}"
     
     # Ensure handle is lowercase with hyphens only (no spaces or capital letters)
     handle = handle.lower()
@@ -147,7 +156,11 @@ def create_shopify_row(product, variant_value="", image_url="", image_position="
     """Create a Shopify CSV row with all required columns in exact order"""
     # Handle must be the same for all rows of the same product
     # Generate unique handle: slugified title + base SKU
-    handle = generate_unique_handle(product.get('title', ''), product.get('base_sku', ''))
+    handle = generate_unique_handle(
+        product.get('title', ''),
+        product.get('base_sku', ''),
+        fallback_index=len(st.session_state.products_list),
+    )
     
     # Title, Body (HTML), and Price should only be in the first variant row
     title = product['title'] or "Untitled Product" if is_first_variant else ""
@@ -352,10 +365,249 @@ def format_for_shopify(product):
     
     return rows
 
-def main():
-    st.title("🛍️ Markaz to Shopify CSV Converter")
-    st.markdown("Scrape Markaz product data and convert to Shopify-compatible CSV format.")
-    
+def save_product_to_supabase(product_data):
+    """Save Markaz URL, stock status, and Shopify handle to Supabase after a successful fetch."""
+    if not is_supabase_configured():
+        return False, 'Supabase keys not configured in .streamlit/secrets.toml'
+
+    markaz_url = (product_data or {}).get('url', '').strip()
+    if not markaz_url:
+        return False, 'Product URL missing'
+
+    shopify_handle = generate_unique_handle(
+        product_data.get('title', ''),
+        product_data.get('base_sku', ''),
+    )
+
+    try:
+        upsert_tracked_product(
+            markaz_url=markaz_url,
+            stock_status=product_data.get('stock_status', 'unknown'),
+            title=product_data.get('title'),
+            shopify_handle=shopify_handle,
+        )
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
+
+
+def update_tracked_product_from_scrape(markaz_url, scraped_data):
+    """Update Supabase row after a live Markaz refresh."""
+    shopify_handle = generate_unique_handle(
+        scraped_data.get('title', ''),
+        scraped_data.get('base_sku', ''),
+    )
+    return update_tracked_stock_status(
+        markaz_url,
+        scraped_data.get('stock_status', 'unknown'),
+        title=scraped_data.get('title'),
+        shopify_handle=shopify_handle,
+    )
+
+
+def apply_default_pricing_rules(product_data):
+    fetched_price = float(product_data.get('price', 0))
+    if fetched_price < 2000:
+        default_variant_adjustment = 500.0
+    else:
+        default_variant_adjustment = 1000.0
+    product_data['variant_price_adjustment'] = default_variant_adjustment
+    product_data['compare_at_price_adjustment'] = default_variant_adjustment + 1500.0
+    return product_data
+
+
+def get_filtered_tracked_rows(tracked_rows, stock_filter):
+    filter_values = {
+        'All': None,
+        'In Stock': 'in_stock',
+        'Out of Stock': 'out_of_stock',
+        'Unknown': 'unknown',
+    }
+    selected_status = filter_values.get(stock_filter)
+    if not selected_status:
+        return tracked_rows
+    return [
+        row for row in tracked_rows
+        if row.get('stock_status', 'unknown') == selected_status
+    ]
+
+
+def format_stock_status_label(stock_status):
+    labels = {
+        'in_stock': 'In Stock',
+        'out_of_stock': 'Out of Stock',
+        'unknown': 'Unknown',
+    }
+    return labels.get(stock_status, stock_status or 'Unknown')
+
+
+def render_tracked_products_tab():
+    st.subheader("Tracked Products")
+    st.caption("Markaz URLs auto-save here when you successfully add a product in the Converter tab.")
+
+    if not is_supabase_configured():
+        st.warning("Supabase is not configured. Add your keys to `.streamlit/secrets.toml`.")
+        return
+
+    try:
+        tracked_rows = list_tracked_products()
+    except Exception as exc:
+        st.error(f"Could not load tracked products from Supabase: {exc}")
+        return
+
+    if not tracked_rows:
+        st.info("No tracked products yet. Add a product in the Converter tab and it will appear here automatically.")
+        return
+
+    stock_filter = st.radio(
+        "Filter by stock status",
+        options=["All", "In Stock", "Out of Stock", "Unknown"],
+        horizontal=True,
+        key="tracked_stock_filter",
+    )
+    filtered_rows = get_filtered_tracked_rows(tracked_rows, stock_filter)
+
+    refresh_col, send_col = st.columns(2)
+    with refresh_col:
+        refresh_all = st.button("Refresh All Status", type="secondary", key="refresh_all_tracked")
+    with send_col:
+        send_to_converter = st.button(
+            "Send Filtered to Shopify Converter",
+            type="primary",
+            key="send_filtered_to_converter",
+            help="Re-fetch filtered products from Markaz and load them in the Shopify Converter tab for CSV download.",
+        )
+
+    if refresh_all:
+        progress = st.progress(0.0, text="Refreshing stock status...")
+        for index, row in enumerate(tracked_rows):
+            progress.progress((index + 1) / len(tracked_rows), text=f"Checking {index + 1} of {len(tracked_rows)}")
+            scraped = scrape_markaz_product(row['markaz_url'])
+            if scraped.get('status') == 'success':
+                update_tracked_product_from_scrape(row['markaz_url'], scraped)
+        progress.progress(1.0, text="Done.")
+        st.success("Stock status refreshed for all tracked products.")
+        st.rerun()
+
+    if send_to_converter:
+        if not filtered_rows:
+            st.warning(f"No products with status **{stock_filter}** to send.")
+        else:
+            progress = st.progress(0.0, text="Fetching products from Markaz...")
+            status_container = st.empty()
+            products = []
+            processed_urls = set()
+            failed = []
+            total = len(filtered_rows)
+
+            with sync_playwright() as playwright:
+                browser = launch_browser_for_serverless(playwright)
+                for index, row in enumerate(filtered_rows):
+                    link = row.get('markaz_url', '').strip()
+                    status_container.caption(f"**Product {index + 1} of {total}** — fetching...")
+                    progress.progress((index + 1) / total, text=f"Product {index + 1} of {total}")
+                    if not link:
+                        continue
+
+                    context = None
+                    try:
+                        context = browser.new_context(
+                            permissions=[],
+                            ignore_https_errors=True,
+                            viewport={'width': 1920, 'height': 1080},
+                        )
+                        page = context.new_page()
+                        product_data = scrape_product_from_page(page, link)
+                        if product_data.get('status') == 'success':
+                            apply_default_pricing_rules(product_data)
+                            products.append(product_data)
+                            processed_urls.add(link)
+                        else:
+                            failed.append((link, product_data.get('status', 'Unknown error')))
+                    except Exception as exc:
+                        failed.append((link, str(exc)))
+                    finally:
+                        if context:
+                            try:
+                                context.close()
+                            except Exception:
+                                pass
+                    if index < total - 1:
+                        time.sleep(0.5)
+
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+
+            progress.progress(1.0, text="Done.")
+            status_container.caption("Finished.")
+
+            if products:
+                st.session_state.products_list = products
+                st.session_state.processed_urls = processed_urls
+                st.session_state.fetched_product_data = None
+                st.session_state.converter_import_message = (
+                    f"Loaded **{len(products)}** product(s) with filter **{stock_filter}**. "
+                    "Open the **Shopify Converter** tab to review and download CSV."
+                )
+                st.success(st.session_state.converter_import_message)
+            else:
+                st.error("No products could be fetched. Please try again.")
+
+            for link, error in failed:
+                st.warning(f"Skipped: {link[:70]}... — {error}")
+
+            if products:
+                st.rerun()
+
+    if stock_filter == "All":
+        st.markdown(f"**{len(tracked_rows)}** saved URL(s)")
+    else:
+        st.markdown(f"**{len(filtered_rows)}** shown of **{len(tracked_rows)}** saved URL(s)")
+
+    if not filtered_rows:
+        st.info(f"No products with status **{stock_filter}**.")
+        return
+
+    for row in filtered_rows:
+        title = row.get('title') or 'Untitled product'
+        stock_status = row.get('stock_status', 'unknown')
+        with st.expander(f"{format_stock_status_label(stock_status)} | {title}", expanded=False):
+            if row.get('shopify_handle'):
+                st.write("**Shopify Handle:**", row['shopify_handle'])
+            st.write("**URL:**", row.get('markaz_url'))
+            st.write("**Stock Status:**", format_stock_status_label(stock_status))
+            if row.get('last_checked_at'):
+                st.write("**Last Checked:**", row['last_checked_at'])
+            if row.get('created_at'):
+                st.write("**Saved At:**", row['created_at'])
+
+            action_col1, action_col2 = st.columns(2)
+            with action_col1:
+                if st.button("Refresh Status", key=f"refresh_tracked_{row['id']}", width='stretch'):
+                    with st.spinner("Checking Markaz..."):
+                        scraped = scrape_markaz_product(row['markaz_url'])
+                    if scraped.get('status') == 'success':
+                        update_tracked_product_from_scrape(row['markaz_url'], scraped)
+                        st.success("Status updated.")
+                        st.rerun()
+                    else:
+                        st.error(scraped.get('status', 'Failed to refresh status'))
+            with action_col2:
+                if st.button("Delete", key=f"delete_tracked_{row['id']}", width='stretch'):
+                    delete_tracked_product(row['markaz_url'])
+                    st.success("Removed from Supabase.")
+                    st.rerun()
+
+
+def render_converter_tab():
+    if st.session_state.get('converter_import_message'):
+        st.success(st.session_state.converter_import_message)
+        if st.button("Dismiss", key="dismiss_converter_import_message"):
+            st.session_state.converter_import_message = None
+            st.rerun()
+
     # Custom CSS for button styling
     st.markdown("""
     <style>
@@ -520,6 +772,9 @@ def main():
                                 new_product_data["compare_at_price_adjustment"] = default_compare_at_adjustment
                                 st.session_state.products_list.append(new_product_data)
                                 st.session_state.processed_urls.add(link)
+                                saved_ok, saved_error = save_product_to_supabase(new_product_data)
+                                if not saved_ok:
+                                    st.warning(f"Supabase save failed for {link[:60]}... — {saved_error}")
                                 added_count += 1
                             else:
                                 st.warning(f"⚠️ Skipped (failed): {link[:60]}... — {new_product_data.get('status', 'Unknown error')}")
@@ -561,7 +816,13 @@ def main():
                         st.session_state.products_list.append(product_data)
                         st.session_state.processed_urls.add(first_url)
                         st.session_state.url_input_counter += 1
-                        st.success(f"✅ **Product Added Successfully!**\n\n**{product_data['title']}** has been added to your list with default pricing rules.")
+                        saved_ok, saved_error = save_product_to_supabase(product_data)
+                        success_message = f"Product **{product_data['title']}** has been added to your list with default pricing rules."
+                        if saved_ok:
+                            success_message += " Saved to Supabase tracked products."
+                        else:
+                            success_message += f" Supabase save failed: {saved_error}"
+                        st.success(success_message)
                         st.rerun()
                     else:
                         st.error(f"❌ Failed to scrape: {product_data['status']}")
@@ -653,6 +914,8 @@ def main():
             st.session_state.products_list.append(product_to_add)
             if product_to_add.get("url"):
                 st.session_state.processed_urls.add(product_to_add["url"])
+
+            saved_ok, saved_error = save_product_to_supabase(product_to_add)
             
             # Clear fetched data from session state (preview section clears)
             st.session_state.fetched_product_data = None
@@ -661,8 +924,12 @@ def main():
             # Increment counter to create new widget key (this clears the input)
             st.session_state.url_input_counter += 1
             
-            # Show success message
-            st.success(f"✅ **Product Added Successfully!**\n\n**{product_to_add['title']}** has been added to your conversion list.")
+            success_message = f"Product **{product_to_add['title']}** has been added to your conversion list."
+            if saved_ok:
+                success_message += " Saved to Supabase tracked products."
+            else:
+                success_message += f" Supabase save failed: {saved_error}"
+            st.success(success_message)
             
             # Refresh to show updated main list and clear preview
             st.rerun()
@@ -841,6 +1108,20 @@ def main():
         3. Repeat for multiple products
         4. Click "Download Shopify CSV" to export all products
         """)
+
+
+def main():
+    st.title("Markaz to Shopify CSV Converter")
+    st.markdown("Scrape Markaz product data and convert to Shopify-compatible CSV format.")
+
+    converter_tab, tracked_tab = st.tabs(["Shopify Converter", "Tracked Products"])
+
+    with converter_tab:
+        render_converter_tab()
+
+    with tracked_tab:
+        render_tracked_products_tab()
+
 
 if __name__ == "__main__":
     main()

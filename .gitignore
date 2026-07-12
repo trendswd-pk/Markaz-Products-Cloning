@@ -39,6 +39,9 @@ ENV/
 .env.local
 .env.*.local
 
+# Streamlit secrets (real keys)
+.streamlit/secrets.toml
+
 # Logs
 *.log
 

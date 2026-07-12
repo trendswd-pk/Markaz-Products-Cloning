@@ -58,6 +58,7 @@ def _empty_result(url, status):
         'variants': ['Default Title'],
         'option1_name': 'Title',
         'breadcrumb_items': [],
+        'stock_status': None,
         'url': url,
         'status': status,
     }
@@ -292,6 +293,29 @@ def extract_images(page, product_ld=None, url=''):
     return image_urls
 
 
+def extract_stock_status(page, product_ld=None):
+    if product_ld:
+        offers = product_ld.get('offers', {})
+        if isinstance(offers, list):
+            offers = offers[0] if offers else {}
+        availability = str((offers or {}).get('availability', ''))
+        if 'InStock' in availability:
+            return 'in_stock'
+        if 'OutOfStock' in availability:
+            return 'out_of_stock'
+
+    try:
+        body_text = page.inner_text('body')
+        if re.search(r'out of stock|sold out|currently unavailable', body_text, re.IGNORECASE):
+            return 'out_of_stock'
+        if re.search(r'\d+\s+in stock', body_text, re.IGNORECASE):
+            return 'in_stock'
+    except Exception:
+        pass
+
+    return 'unknown'
+
+
 def scrape_product_from_page(page, url):
     """Scrape product data from an already-open Playwright page."""
 
@@ -341,6 +365,7 @@ def scrape_product_from_page(page, url):
     breadcrumb_items = extract_breadcrumbs(page, title, product_ld)
     option1_name, variants = extract_variants(page, product_ld)
     image_urls = extract_images(page, product_ld, url)
+    stock_status = extract_stock_status(page, product_ld)
 
     return {
         'title': title,
@@ -351,6 +376,7 @@ def scrape_product_from_page(page, url):
         'variants': variants,
         'option1_name': option1_name,
         'breadcrumb_items': breadcrumb_items,
+        'stock_status': stock_status,
         'url': url,
         'status': 'success',
     }
