@@ -3,8 +3,6 @@ import os
 import re
 from urllib.parse import urljoin
 
-from playwright.sync_api import sync_playwright
-
 SIZE_PATTERN = re.compile(
     r'^(X-?Small|Small|Medium|Large|X-?Large|XX-?Large|XXX-?Large|\d+XL?|One Size|Free Size)$',
     re.IGNORECASE,
@@ -408,6 +406,8 @@ def scrape_product_from_page(page, url):
 
 def scrape_markaz_product(url):
     """Scrape product data from Markaz product URL."""
+    from playwright.sync_api import sync_playwright
+
     browser = None
     context = None
     try:

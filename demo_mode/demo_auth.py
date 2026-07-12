@@ -70,8 +70,8 @@ def render_login_page():
         )
 
         st.info(
-            "Demo Mode uses browser **localStorage** + local JSON files. "
-            "No Supabase or API routes are used."
+            "Demo Mode uses per-user JSON files on the server. "
+            "No Supabase, live Markaz scraping, or real Shopify."
         )
 
         with st.form('demo_login_form', clear_on_submit=False):

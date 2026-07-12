@@ -20,7 +20,7 @@ def _safe_username(username):
 
 
 class PerUserStorage:
-    """Server-side per-user store (Streamlit companion to browser localStorage)."""
+    """Server-side per-user JSON store for demo mode."""
 
     def __init__(self, username):
         self.username = username
@@ -79,31 +79,8 @@ def seed_dummy_data_if_empty(username):
 
 
 def render_local_storage_bridge():
-    """Mirror current user data into browser localStorage for demo persistence."""
-    username = st.session_state.get('auth_username')
-    if not username:
-        return
+    """No-op: browser localStorage sync disabled (components.html segfaults on some Linux setups).
 
-    storage = get_current_storage()
-    payload = json.dumps(storage.export_payload(), ensure_ascii=False)
-    payload_json = json.dumps(payload)
-    storage_key = browser_storage_key(username)
-
-    import streamlit.components.v1 as components
-
-    components.html(
-        f"""
-        <script>
-        (function() {{
-            const key = {json.dumps(storage_key)};
-            const value = {payload_json};
-            try {{
-                localStorage.setItem(key, value);
-            }} catch (err) {{
-                console.warn('Demo localStorage sync failed', err);
-            }}
-        }})();
-        </script>
-        """,
-        height=0,
-    )
+    Demo data persists via server-side JSON in demo_mode/data/users/.
+    """
+    return

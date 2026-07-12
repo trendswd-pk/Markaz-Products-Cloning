@@ -4,13 +4,17 @@
 def activate_demo_mode():
     import auth
     import auth_config
+    import markaz_scraper
     import shopify_config
     import shopify_publish
     import shopify_sync
     import supabase_config
     import supabase_store
 
-    from demo_mode import demo_auth, demo_shopify, demo_store
+    from demo_mode import demo_auth, demo_scrape, demo_shopify, demo_store
+
+    markaz_scraper.scrape_markaz_product = demo_scrape.scrape_markaz_product_demo
+    markaz_scraper.scrape_product_from_page = demo_scrape.scrape_product_from_page_demo
 
     supabase_config.is_supabase_configured = lambda: True
 
@@ -42,10 +46,17 @@ def activate_demo_mode():
 def rebind_app_module():
     """Re-bind names imported into app.py (guards against stale module references)."""
     import app as app_module
-    from demo_mode import demo_shopify
+    from demo_mode import demo_scrape, demo_shopify, demo_store
 
+    app_module.scrape_markaz_product = demo_scrape.scrape_markaz_product_demo
+    app_module.scrape_product_from_page = demo_scrape.scrape_product_from_page_demo
     app_module.publish_products_to_shopify = demo_shopify.publish_products_to_shopify
     app_module.sync_tracked_rows_to_shopify = demo_shopify.sync_tracked_rows_to_shopify
     app_module.fetch_shopify_status_map = demo_shopify.fetch_shopify_status_map
     app_module.delete_tracked_row_from_shopify = demo_shopify.delete_tracked_row_from_shopify
     app_module.get_shopify_client = demo_shopify.get_shopify_client
+    app_module.list_tracked_products = demo_store.list_tracked_products
+    app_module.upsert_tracked_product = demo_store.upsert_tracked_product
+    app_module.update_tracked_shopify_metadata = demo_store.update_tracked_shopify_metadata
+    app_module.update_tracked_stock_status = demo_store.update_tracked_stock_status
+    app_module.delete_tracked_product = demo_store.delete_tracked_product

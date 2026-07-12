@@ -1,5 +1,4 @@
 import streamlit as st
-from playwright.sync_api import sync_playwright
 import pandas as pd
 import re
 import os
@@ -9,7 +8,6 @@ from html import escape
 from pathlib import Path
 
 from auth import init_auth_session, is_authenticated, render_login_page, render_logout_control
-from markaz_scraper import launch_browser_for_serverless, scrape_product_from_page, scrape_markaz_product
 from pricing_rules import get_default_price_adjustments
 from shopify_config import is_shopify_configured
 from shopify_sync import (
@@ -28,9 +26,34 @@ from supabase_store import (
     upsert_tracked_product,
 )
 
+_IS_DEMO = os.environ.get('MARKAZ_DEMO_MODE') == '1'
+
+
+def show_product_image(image_url, **kwargs):
+    """Avoid st.image in demo mode (native image decode can segfault on some Linux setups)."""
+    if _IS_DEMO:
+        st.caption(f"Demo preview image: `{str(image_url)[:80]}`")
+        return
+    if image_url:
+        st.image(image_url, **kwargs)
+
+
+def render_shopify_tab_icon():
+    if is_shopify_configured():
+        st.markdown('<span style="font-size:1.4rem;" title="Shopify">🛍️</span>', unsafe_allow_html=True)
+
+
+if _IS_DEMO:
+    from demo_mode.demo_scrape import scrape_markaz_product_demo as scrape_markaz_product
+    from demo_mode.demo_scrape import scrape_product_from_page_demo as scrape_product_from_page
+else:
+    from playwright.sync_api import sync_playwright
+    from markaz_scraper import launch_browser_for_serverless, scrape_product_from_page, scrape_markaz_product
+
 # Playwright Browser Installation: Install chromium browser if missing
-# This ensures browser is available when app runs on Streamlit Cloud
-os.system('playwright install chromium')
+# Skipped in demo mode (demo uses simulated scrape, no browser needed)
+if not os.environ.get('MARKAZ_DEMO_MODE'):
+    os.system('playwright install chromium')
 
 # Page configuration (skipped in demo_mode/app.py — that entry sets config first)
 if not os.environ.get('MARKAZ_DEMO_MODE'):
@@ -554,8 +577,8 @@ def render_tracked_products_heading():
     with heading_col:
         st.subheader("Tracked Products")
     with icon_col:
-        if is_shopify_configured() and SHOPIFY_ICON_PATH.exists():
-            st.image(str(SHOPIFY_ICON_PATH), width=32)
+        if is_shopify_configured():
+            render_shopify_tab_icon()
 
 
 def apply_shopify_sync_results(results):
@@ -1109,7 +1132,8 @@ def render_converter_tab():
         )
     
     # Add Enter key listener to trigger Add to List button (for single-line paste)
-    st.markdown("""
+    if not _IS_DEMO:
+        st.markdown("""
     <script>
     (function() {
         function setupEnterKeyListener() {
@@ -1173,6 +1197,8 @@ def render_converter_tab():
         with st.spinner("Fetching product data..."):
             product_data = scrape_markaz_product(url_input.strip())
         if product_data.get("status") == "success":
+            if os.environ.get('MARKAZ_DEMO_MODE') == '1':
+                st.info('**Demo Mode:** Product preview is simulated from your pasted URL (no live Markaz scrape).')
             st.session_state.fetched_product_data = product_data
             st.session_state.show_product_dialog = True
             st.rerun()
@@ -1190,23 +1216,15 @@ def render_converter_tab():
                 progress_bar = st.progress(0.0, text="Starting...")
                 status_container = st.empty()
                 added_count = 0
-                with sync_playwright() as p:
-                    browser = launch_browser_for_serverless(p)
+                if _IS_DEMO:
                     for i, link in enumerate(links):
-                        status_container.caption(f"**Link {i + 1} of {total}** — fetching...")
+                        status_container.caption(f"**Link {i + 1} of {total}** — fetching (demo)...")
                         progress_bar.progress((i + 1) / total, text=f"Link {i + 1} of {total}")
                         if link in st.session_state.processed_urls:
                             st.warning(f"⚠️ Skipped (already added): {link[:60]}...")
                             continue
-                        context = None
                         try:
-                            context = browser.new_context(
-                                permissions=[],
-                                ignore_https_errors=True,
-                                viewport={'width': 1920, 'height': 1080}
-                            )
-                            page = context.new_page()
-                            new_product_data = scrape_product_from_page(page, link)
+                            new_product_data = scrape_markaz_product(link)
                             if new_product_data.get("status") == "success":
                                 fetched_price = float(new_product_data.get("price", 0))
                                 default_variant_adjustment, default_compare_at_adjustment = (
@@ -1221,21 +1239,59 @@ def render_converter_tab():
                                     st.warning(f"Supabase save failed for {link[:60]}... — {saved_error}")
                                 added_count += 1
                             else:
-                                st.warning(f"⚠️ Skipped (failed): {link[:60]}... — {new_product_data.get('status', 'Unknown error')}")
+                                st.warning(
+                                    f"⚠️ Skipped (failed): {link[:60]}... — "
+                                    f"{new_product_data.get('status', 'Unknown error')}"
+                                )
                         except Exception as e:
                             st.warning(f"⚠️ Skipped (error): {link[:60]}... — {str(e)}")
-                        finally:
-                            if context:
-                                try:
-                                    context.close()
-                                except Exception:
-                                    pass
-                        if i < total - 1:
-                            time.sleep(1)
-                    try:
-                        browser.close()
-                    except Exception:
-                        pass
+                else:
+                    with sync_playwright() as p:
+                        browser = launch_browser_for_serverless(p)
+                        for i, link in enumerate(links):
+                            status_container.caption(f"**Link {i + 1} of {total}** — fetching...")
+                            progress_bar.progress((i + 1) / total, text=f"Link {i + 1} of {total}")
+                            if link in st.session_state.processed_urls:
+                                st.warning(f"⚠️ Skipped (already added): {link[:60]}...")
+                                continue
+                            context = None
+                            try:
+                                context = browser.new_context(
+                                    permissions=[],
+                                    ignore_https_errors=True,
+                                    viewport={'width': 1920, 'height': 1080}
+                                )
+                                page = context.new_page()
+                                new_product_data = scrape_product_from_page(page, link)
+                                if new_product_data.get("status") == "success":
+                                    fetched_price = float(new_product_data.get("price", 0))
+                                    default_variant_adjustment, default_compare_at_adjustment = (
+                                        get_default_price_adjustments(fetched_price)
+                                    )
+                                    new_product_data["variant_price_adjustment"] = default_variant_adjustment
+                                    new_product_data["compare_at_price_adjustment"] = default_compare_at_adjustment
+                                    st.session_state.products_list.append(new_product_data)
+                                    st.session_state.processed_urls.add(link)
+                                    saved_ok, saved_error = save_product_to_supabase(new_product_data)
+                                    if not saved_ok:
+                                        st.warning(f"Supabase save failed for {link[:60]}... — {saved_error}")
+                                    added_count += 1
+                                else:
+                                    st.warning(f"⚠️ Skipped (failed): {link[:60]}... — {new_product_data.get('status', 'Unknown error')}")
+                            except Exception as e:
+                                st.warning(f"⚠️ Skipped (error): {link[:60]}... — {str(e)}")
+                            finally:
+                                if context:
+                                    try:
+                                        context.close()
+                                    except Exception:
+                                        pass
+                            if i < total - 1:
+                                time.sleep(1)
+                        try:
+                            browser.close()
+                        except Exception:
+                            pass
                 progress_bar.progress(1.0, text="Done.")
                 status_container.caption("Finished.")
                 st.success(f"✅ **Bulk fetch complete.** Added **{added_count}** product(s) to the list (of {total} URL(s) processed).")
@@ -1283,7 +1339,7 @@ def render_converter_tab():
         # Column 1: Product Image
         with col1:
             if product_data.get('image_urls'):
-                st.image(product_data['image_urls'][0], width='stretch', caption="Product Image")
+                show_product_image(product_data['image_urls'][0], width='stretch', caption="Product Image")
         
         # Column 2: Product Details (compact format)
         with col2:
@@ -1418,7 +1474,7 @@ def render_converter_tab():
                     st.write("**Description:**", product['description'][:300] + "..." if len(product['description']) > 300 else product['description'])
                     st.write("**Images Found:**", len(product['image_urls']))
                     if product['image_urls']:
-                        st.image(product['image_urls'][0], width=200, caption="First Image")
+                        show_product_image(product['image_urls'][0], width=200, caption="First Image")
                 
                 st.divider()
                 
@@ -1551,7 +1607,11 @@ def render_converter_tab():
         
         # Show preview
         st.subheader("CSV Preview")
-        st.dataframe(df, width='stretch')
+        if _IS_DEMO:
+            st.caption("Demo mode — showing first 5 rows only.")
+            st.dataframe(df.head(5), width='stretch')
+        else:
+            st.dataframe(df, width='stretch')
         
         # Clear all button
         if st.button("Clear All Products", type="secondary"):

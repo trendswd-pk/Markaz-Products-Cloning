@@ -7,20 +7,21 @@ import streamlit as st
 os.environ['MARKAZ_DEMO_MODE'] = '1'
 
 st.set_page_config(
-    page_title="Markaz to Shopify — Demo Mode",
-    page_icon="🛍️",
-    layout="wide",
+    page_title='Markaz to Shopify — Demo Mode',
+    page_icon='🛍️',
+    layout='wide',
 )
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from demo_mode.bootstrap import activate_demo_mode, rebind_app_module
+from demo_mode.bootstrap import activate_demo_mode
 
 activate_demo_mode()
 
-from auth import init_auth_session, is_authenticated, render_login_page
+from auth import init_auth_session, is_authenticated, render_login_page, render_logout_control
+from demo_mode.demo_main import run
 from demo_mode.demo_ui import render_demo_banner
 
 init_auth_session()
@@ -30,9 +31,5 @@ if not is_authenticated():
     st.stop()
 
 render_demo_banner()
-
-from app import main
-
-rebind_app_module()
-
-main()
+render_logout_control()
+run()

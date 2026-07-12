@@ -1,7 +1,5 @@
 import streamlit as st
 
-from demo_mode.local_storage import render_local_storage_bridge
-
 
 def render_demo_banner():
     st.markdown(
@@ -13,10 +11,9 @@ def render_demo_banner():
             padding: 0.75rem 1rem;
             margin-bottom: 1rem;
         ">
-            <strong>Demo Mode</strong> — localStorage + local JSON storage.
-            Supabase and live Markaz scraping are disabled. Shopify actions are simulated only.
+            <strong>Demo Mode</strong> — per-user JSON storage on server.
+            Supabase, live Markaz scraping, and real Shopify are disabled. Actions are simulated only.
         </div>
         """,
         unsafe_allow_html=True,
     )
-    render_local_storage_bridge()
