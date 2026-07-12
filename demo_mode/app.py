@@ -4,11 +4,17 @@ from pathlib import Path
 
 import streamlit as st
 
+os.environ['MARKAZ_DEMO_MODE'] = '1'
+
+st.set_page_config(
+    page_title="Markaz to Shopify — Demo Mode",
+    page_icon="🛍️",
+    layout="wide",
+)
+
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
-
-os.environ['MARKAZ_DEMO_MODE'] = '1'
 
 from demo_mode.bootstrap import activate_demo_mode
 

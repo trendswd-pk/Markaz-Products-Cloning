@@ -32,12 +32,13 @@ from supabase_store import (
 # This ensures browser is available when app runs on Streamlit Cloud
 os.system('playwright install chromium')
 
-# Page configuration
-st.set_page_config(
-    page_title="Markaz to Shopify CSV Converter",
-    page_icon="🛍️",
-    layout="wide"
-)
+# Page configuration (skipped in demo_mode/app.py — that entry sets config first)
+if not os.environ.get('MARKAZ_DEMO_MODE'):
+    st.set_page_config(
+        page_title="Markaz to Shopify CSV Converter",
+        page_icon="🛍️",
+        layout="wide"
+    )
 
 # Initialize session state (products_list at very top for multiple fetch)
 if 'products_list' not in st.session_state:

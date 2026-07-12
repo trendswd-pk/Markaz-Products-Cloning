@@ -8,13 +8,32 @@ Self-contained demo environment for the Markaz to Shopify Converter.
 - **Simulated Shopify** actions
 - **Dummy reference data** on first login
 
-## Run Demo Mode
+## Run locally
 
 From project root:
 
 ```bash
 streamlit run demo_mode/app.py
 ```
+
+## Deploy on Streamlit Cloud
+
+**Wrong** (folder URL — causes error):
+```
+https://github.com/.../Markaz-Products-Cloning/tree/main/demo_mode
+```
+
+**Correct** — paste link to the `.py` file:
+```
+https://github.com/trendswd-pk/Markaz-Products-Cloning/blob/main/demo_mode/app.py
+```
+
+Or use **Switch to interactive picker**:
+- Repository: `trendswd-pk/Markaz-Products-Cloning`
+- Branch: `main`
+- Main file path: `demo_mode/app.py`
+
+No secrets required for demo. Login: `demo` / `demo123`
 
 ## Demo Login Accounts
 
