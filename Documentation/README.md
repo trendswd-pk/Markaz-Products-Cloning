@@ -60,7 +60,13 @@ Step-by-step guides for every page and sub-page in the application.
 2. Open [Tracked Products](./09-tracked-products-tab.md)
 3. Use [Refresh](./10-tracked-products-bulk-actions.md) + [Sync Stock](./10-tracked-products-bulk-actions.md)
 
+### Workflow D: Try demo (no APIs)
+1. [Run demo mode](./15-demo-mode.md) → `streamlit run demo_mode/app.py`
+2. Login with `demo` / `demo123`
+3. Explore [Tracked Products](./09-tracked-products-tab.md) with dummy data (simulated)
+4. Paste a Markaz URL in Converter → simulated fetch → demo publish
+
 ---
 
-**App entry point:** `app.py`  
-**Demo entry point:** `demo_mode/app.py`
+**App entry point:** `app.py` (production)  
+**Demo entry point:** `demo_mode/app.py` (standalone simulated UI)

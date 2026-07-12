@@ -7,7 +7,7 @@ Markaz to Shopify Converter scrapes product data from **Markaz** (`markaz.app`) 
 ## Requirements
 
 - Python 3.12+
-- Chromium (via Playwright)
+- Chromium (via Playwright) — **production only**; not needed for [Demo Mode](./15-demo-mode.md)
 - Internet connection
 
 ## Step 1: Clone and install
@@ -33,9 +33,19 @@ Edit `.streamlit/secrets.toml` with your credentials. See [14-configuration-setu
 
 ## Step 3: Run the app
 
+**Production (real scrape + Shopify + Supabase):**
+
 ```bash
 streamlit run app.py
 ```
+
+**Demo (simulated — no secrets, no Playwright):**
+
+```bash
+streamlit run demo_mode/app.py
+```
+
+See [15-demo-mode.md](./15-demo-mode.md) for demo login and limitations.
 
 Open: **http://localhost:8501**
 
@@ -64,12 +74,15 @@ See [01-login-page.md](./01-login-page.md).
 | `supabase_store.py` | Tracked products database |
 | `pricing_rules.py` | Sale & compare-at price markup |
 | `auth.py` | Login page |
+| `demo_mode/app.py` | Demo entry (simulated, no secrets) |
+| `demo_mode/demo_main.py` | Standalone demo UI |
 
 ## Troubleshooting
 
 | Problem | Fix |
 |---------|-----|
 | Port 8501 busy | `fuser -k 8501/tcp` then restart |
-| Playwright error | `playwright install chromium` |
+| Playwright error | `playwright install chromium` (production only) |
+| Demo crashes / segfault | Use `streamlit run demo_mode/app.py` — do not use `app.py` for demo |
 | Login not configured | Add `[app_login]` to secrets.toml |
 | Supabase warning | Add `[supabase]` block to secrets.toml |

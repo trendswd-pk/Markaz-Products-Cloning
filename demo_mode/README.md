@@ -2,10 +2,12 @@
 
 Self-contained demo environment for the Markaz to Shopify Converter.
 
+- **Standalone UI** (`demo_main.py`) — does not import production `app.py`
 - No **Supabase**
-- No **`api/` routes**
-- **localStorage** + per-user JSON files for storage
-- **Simulated Shopify** actions
+- No **real Shopify API** (simulated publish/sync/delete)
+- No **live Markaz scraping** (simulated from pasted URL)
+- No **Playwright** / Chromium required
+- **Per-user JSON files** on server for storage
 - **Dummy reference data** on first login
 
 ## Run locally
@@ -33,7 +35,7 @@ Or use **Switch to interactive picker**:
 - Branch: `main`
 - Main file path: `demo_mode/app.py`
 
-No secrets required for demo. Login: `demo` / `demo123`
+No secrets required. Login: `demo` / `demo123`
 
 ## Demo Login Accounts
 
@@ -46,21 +48,28 @@ Credentials are shown on the demo login page.
 
 ## Storage
 
-Each user gets isolated storage:
+Each user gets isolated server-side JSON:
 
-- Browser: `localStorage` key `markaz_demo_{username}`
-- Server: `demo_mode/data/users/{username}/local_storage.json`
+- `demo_mode/data/users/{username}/local_storage.json`
 
-Tracked products and other demo data persist per user between sessions.
+Tracked products persist per username between sessions on the same machine.
 
-## Dummy Data
+## What works in demo
 
-On first login, sample tracked products are seeded automatically (see `dummy_data.py`).
+| Action | Behavior |
+|--------|----------|
+| Fetch Product Data | Simulated title/price from URL |
+| Add to List | Saves to converter list + tracked JSON |
+| Publish / Sync Shopify | Simulated + warning banner |
+| Tracked Products | 3 dummy products seeded on first login |
+| Delete tracked row | Removes from JSON only |
 
 ## Production App
 
-Run the normal app (requires Supabase + Shopify secrets):
+Run the normal app (requires Supabase + Shopify secrets + Playwright):
 
 ```bash
 streamlit run app.py
 ```
+
+Full documentation: [Documentation/15-demo-mode.md](../Documentation/15-demo-mode.md)

@@ -65,5 +65,6 @@ If `[app_login]` is missing from secrets, a red error box explains how to add it
 
 ## Demo Mode login
 
-Demo Mode uses separate accounts shown on the login page.  
+Demo Mode is a **separate app** with its own login page and built-in accounts (`demo` / `demo123`).  
+It does not use `secrets.toml`.  
 See [15-demo-mode.md](./15-demo-mode.md).
