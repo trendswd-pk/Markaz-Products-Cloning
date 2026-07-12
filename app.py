@@ -6,12 +6,22 @@ import os
 import copy
 import time
 from html import escape
+from pathlib import Path
 
 from markaz_scraper import launch_browser_for_serverless, scrape_product_from_page, scrape_markaz_product
+from shopify_config import is_shopify_configured
+from shopify_sync import (
+    delete_tracked_row_from_shopify,
+    fetch_shopify_status_map,
+    get_shopify_client,
+    sync_tracked_rows_to_shopify,
+)
+from shopify_publish import publish_products_to_shopify
 from supabase_config import is_supabase_configured
 from supabase_store import (
     delete_tracked_product,
     list_tracked_products,
+    update_tracked_shopify_metadata,
     update_tracked_stock_status,
     upsert_tracked_product,
 )
@@ -40,6 +50,8 @@ if 'add_mode' not in st.session_state:
     st.session_state.add_mode = 'multiple'  # default: multiple; 'single' = one URL, 'multiple' = bulk URLs
 if 'converter_import_message' not in st.session_state:
     st.session_state.converter_import_message = None
+if 'shopify_publish_feedback' not in st.session_state:
+    st.session_state.shopify_publish_feedback = None
 
 def slugify(text):
     """Convert text to URL-friendly handle"""
@@ -441,8 +453,289 @@ def format_stock_status_label(stock_status):
     return labels.get(stock_status, stock_status or 'Unknown')
 
 
+def format_shopify_status_label(snapshot):
+    if not snapshot or not snapshot.get('on_shopify'):
+        return 'Not on Shopify'
+
+    status = (snapshot.get('status') or 'unknown').lower()
+    labels = {
+        'active': 'Shopify: Active',
+        'draft': 'Shopify: Draft',
+        'archived': 'Shopify: Archived',
+    }
+    return labels.get(status, f'Shopify: {status.title()}')
+
+
+def format_shopify_status_detail(snapshot):
+    if not snapshot or not snapshot.get('on_shopify'):
+        if snapshot and snapshot.get('error'):
+            return f"Not on Shopify ({snapshot['error']})"
+        return 'Not on Shopify'
+
+    status = (snapshot.get('status') or 'unknown').title()
+    images_count = snapshot.get('images_count', 0)
+    inventory_qty = snapshot.get('inventory_quantity', 0)
+    updated_at = snapshot.get('updated_at') or '—'
+    return (
+        f"**{status}** · {images_count} image(s) · inventory {inventory_qty} · "
+        f"updated {updated_at}"
+    )
+
+
+SHOPIFY_FIELD_GREEN = "#22c55e"
+
+
+def render_shopify_green_field(label, value):
+    display_value = str(value).replace('**', '')
+    st.markdown(
+        f'<p style="color:{SHOPIFY_FIELD_GREEN}; margin:0.35rem 0;">'
+        f'<strong>{label}:</strong> {display_value}</p>',
+        unsafe_allow_html=True,
+    )
+
+
+def invalidate_shopify_status_cache():
+    st.session_state.pop('shopify_status_map', None)
+
+
+def load_shopify_status_map(tracked_rows, force_refresh=False):
+    if not is_shopify_configured():
+        return {}
+
+    if force_refresh or 'shopify_status_map' not in st.session_state:
+        st.session_state.shopify_status_map = fetch_shopify_status_map(tracked_rows)
+
+    return st.session_state.shopify_status_map
+
+
+def refresh_shopify_status_for_row(row):
+    if not is_shopify_configured():
+        return False
+
+    row_key = row.get('markaz_url') or row.get('id')
+    if 'shopify_status_map' not in st.session_state:
+        st.session_state.shopify_status_map = {}
+
+    st.session_state.shopify_status_map.update(fetch_shopify_status_map([row]))
+    return row_key in st.session_state.shopify_status_map
+
+
+def render_shopify_status_summary(tracked_rows, shopify_status_map):
+    if not is_shopify_configured():
+        return
+
+    on_shopify = 0
+    active_count = 0
+    draft_count = 0
+    for row in tracked_rows:
+        row_key = row.get('markaz_url') or row.get('id')
+        snapshot = shopify_status_map.get(row_key, {})
+        if snapshot.get('on_shopify'):
+            on_shopify += 1
+            status = (snapshot.get('status') or '').lower()
+            if status == 'active':
+                active_count += 1
+            elif status == 'draft':
+                draft_count += 1
+
+    st.caption(
+        f"Shopify: **{on_shopify}** of **{len(tracked_rows)}** tracked product(s) found on store "
+        f"({active_count} active, {draft_count} draft)."
+    )
+
+
+SHOPIFY_ICON_PATH = Path(__file__).resolve().parent / 'assets' / 'shopify-icon.svg'
+
+
+def render_tracked_products_heading():
+    heading_col, icon_col = st.columns([0.94, 0.06], vertical_alignment="center")
+    with heading_col:
+        st.subheader("Tracked Products")
+    with icon_col:
+        if is_shopify_configured() and SHOPIFY_ICON_PATH.exists():
+            st.image(str(SHOPIFY_ICON_PATH), width=32)
+
+
+def apply_shopify_sync_results(results):
+    synced_count = 0
+    failed_results = []
+
+    for result in results:
+        if result.get('success'):
+            synced_count += 1
+            markaz_url = result.get('markaz_url')
+            if markaz_url:
+                update_tracked_shopify_metadata(
+                    markaz_url,
+                    shopify_product_id=result.get('shopify_product_id'),
+                    shopify_handle=result.get('shopify_handle'),
+                )
+        else:
+            failed_results.append(result)
+
+    return synced_count, failed_results
+
+
+def show_shopify_sync_summary(synced_count, failed_results):
+    if synced_count:
+        st.success(f"Synced **{synced_count}** product(s) to Shopify.")
+    for result in failed_results:
+        label = result.get('title') or result.get('shopify_handle') or result.get('markaz_url', 'Product')
+        st.warning(f"Shopify sync skipped/failed for **{label}**: {result.get('error', 'Unknown error')}")
+
+
+def apply_shopify_publish_results(results):
+    created_count = 0
+    updated_count = 0
+    failed_results = []
+    warning_results = []
+
+    for result in results:
+        if result.get('success'):
+            if result.get('action') == 'created':
+                created_count += 1
+            else:
+                updated_count += 1
+
+            if result.get('stock_sync_warning'):
+                warning_results.append(result)
+
+            markaz_url = result.get('markaz_url')
+            if markaz_url and is_supabase_configured():
+                upsert_tracked_product(
+                    markaz_url=markaz_url,
+                    stock_status=result.get('stock_status', 'unknown'),
+                    title=result.get('title'),
+                    shopify_handle=result.get('shopify_handle'),
+                )
+                update_tracked_shopify_metadata(
+                    markaz_url,
+                    shopify_product_id=result.get('shopify_product_id'),
+                    shopify_handle=result.get('shopify_handle'),
+                )
+        else:
+            failed_results.append(result)
+
+    return created_count, updated_count, failed_results, warning_results
+
+
+def format_shopify_error_message(error_text):
+    error_text = error_text or 'Unknown error'
+    if 'merchant approval' in error_text.lower():
+        scope_match = re.search(r'for ([\w_]+) scope', error_text)
+        missing_scope = scope_match.group(1) if scope_match else None
+        scope_hint = f" Missing scope: `{missing_scope}`." if missing_scope else ''
+        return (
+            f"{error_text}\n\n"
+            f"**Fix:** Your Shopify app is connected but the store has not approved API permissions.{scope_hint}\n\n"
+            "1. Open [Shopify Dev Dashboard](https://dev.shopify.com/dashboard) → your app → **Configuration**\n"
+            "2. Under **Admin API access scopes**, enable all of:\n"
+            "   `read_products`, `write_products`, `read_inventory`, `write_inventory`, `read_locations`\n"
+            "3. **Save** and **Release** a new app version\n"
+            "4. Reinstall the app on **at One Spot** (`5qxhsf-vs.myshopify.com`) and click **Install** / **Approve**\n"
+            "5. Restart this app and publish again"
+        )
+    return error_text
+
+
+def store_shopify_publish_feedback(created_count, updated_count, failed_results, warning_results=None):
+    st.session_state.shopify_publish_feedback = {
+        'created': created_count,
+        'updated': updated_count,
+        'failed': failed_results,
+        'warnings': warning_results or [],
+    }
+
+
+def render_shopify_publish_feedback():
+    feedback = st.session_state.get('shopify_publish_feedback')
+    if not feedback:
+        return
+
+    show_shopify_publish_summary(
+        feedback.get('created', 0),
+        feedback.get('updated', 0),
+        feedback.get('failed', []),
+        feedback.get('warnings', []),
+    )
+    if st.button('Dismiss publish results', key='dismiss_shopify_publish_feedback'):
+        st.session_state.shopify_publish_feedback = None
+        st.rerun()
+
+
+def show_shopify_publish_summary(created_count, updated_count, failed_results, warning_results=None):
+    if created_count or updated_count:
+        st.success(
+            f"Shopify publish complete. **Created:** {created_count}, **Updated:** {updated_count}."
+        )
+    elif failed_results:
+        st.error("No products were published to Shopify. See error details below.")
+
+    for result in warning_results or []:
+        label = result.get('title') or result.get('shopify_handle') or result.get('markaz_url', 'Product')
+        images_added = result.get('images_added', 0)
+        images_note = f" **Images added:** {images_added}." if images_added else ''
+        st.warning(
+            f"**{label}** published, but stock/inventory was not synced.{images_note}\n\n"
+            f"{format_shopify_error_message(result.get('stock_sync_warning'))}"
+        )
+
+    for result in failed_results:
+        label = result.get('title') or result.get('shopify_handle') or result.get('markaz_url', 'Product')
+        st.error(
+            f"Shopify publish failed for **{label}**:\n\n{format_shopify_error_message(result.get('error'))}"
+        )
+
+
+def fetch_markaz_products_from_tracked_rows(tracked_rows):
+    products = []
+    processed_urls = set()
+    failed = []
+    total = len(tracked_rows)
+
+    with sync_playwright() as playwright:
+        browser = launch_browser_for_serverless(playwright)
+        for index, row in enumerate(tracked_rows):
+            link = row.get('markaz_url', '').strip()
+            if not link:
+                continue
+
+            context = None
+            try:
+                context = browser.new_context(
+                    permissions=[],
+                    ignore_https_errors=True,
+                    viewport={'width': 1920, 'height': 1080},
+                )
+                page = context.new_page()
+                product_data = scrape_product_from_page(page, link)
+                if product_data.get('status') == 'success':
+                    apply_default_pricing_rules(product_data)
+                    products.append(product_data)
+                    processed_urls.add(link)
+                else:
+                    failed.append((link, product_data.get('status', 'Unknown error')))
+            except Exception as exc:
+                failed.append((link, str(exc)))
+            finally:
+                if context:
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
+            if index < total - 1:
+                time.sleep(0.5)
+
+        try:
+            browser.close()
+        except Exception:
+            pass
+
+    return products, processed_urls, failed
+
+
 def render_tracked_products_tab():
-    st.subheader("Tracked Products")
+    render_tracked_products_heading()
     st.caption("Markaz URLs auto-save here when you successfully add a product in the Converter tab.")
 
     if not is_supabase_configured():
@@ -466,17 +759,53 @@ def render_tracked_products_tab():
         key="tracked_stock_filter",
     )
     filtered_rows = get_filtered_tracked_rows(tracked_rows, stock_filter)
+    shopify_status_map = load_shopify_status_map(tracked_rows)
 
-    refresh_col, send_col = st.columns(2)
+    auto_sync_shopify = st.checkbox(
+        "Auto-sync to Shopify after Refresh All Status",
+        value=True,
+        key="shopify_auto_sync_on_refresh",
+        disabled=not is_shopify_configured(),
+    )
+
+    refresh_col, shopify_refresh_col, send_col, sync_col, publish_col = st.columns(5)
     with refresh_col:
         refresh_all = st.button("Refresh All Status", type="secondary", key="refresh_all_tracked")
+    with shopify_refresh_col:
+        refresh_shopify_status = st.button(
+            "Refresh Shopify Status",
+            type="secondary",
+            key="refresh_shopify_status_map",
+            disabled=not is_shopify_configured(),
+            help="Fetch latest product status from Shopify for all tracked products.",
+        )
     with send_col:
         send_to_converter = st.button(
-            "Send Filtered to Shopify Converter",
+            "Send to Converter",
             type="primary",
             key="send_filtered_to_converter",
-            help="Re-fetch filtered products from Markaz and load them in the Shopify Converter tab for CSV download.",
+            help="Re-fetch filtered products and load them in Shopify Converter for CSV.",
         )
+    with sync_col:
+        sync_to_shopify = st.button(
+            "Sync Stock",
+            type="secondary",
+            key="sync_filtered_to_shopify",
+            disabled=not is_shopify_configured(),
+            help="Update inventory/status on existing Shopify products.",
+        )
+    with publish_col:
+        publish_to_shopify = st.button(
+            "Publish to Shopify",
+            type="primary",
+            key="publish_filtered_to_shopify",
+            disabled=not is_shopify_configured(),
+            help="Fetch from Markaz and create products directly on Shopify.",
+        )
+
+    if refresh_shopify_status:
+        load_shopify_status_map(tracked_rows, force_refresh=True)
+        st.rerun()
 
     if refresh_all:
         progress = st.progress(0.0, text="Refreshing stock status...")
@@ -487,7 +816,50 @@ def render_tracked_products_tab():
                 update_tracked_product_from_scrape(row['markaz_url'], scraped)
         progress.progress(1.0, text="Done.")
         st.success("Stock status refreshed for all tracked products.")
+
+        if auto_sync_shopify and is_shopify_configured():
+            refreshed_rows = list_tracked_products()
+            sync_results = sync_tracked_rows_to_shopify(refreshed_rows)
+            synced_count, failed_results = apply_shopify_sync_results(sync_results)
+            show_shopify_sync_summary(synced_count, failed_results)
+
+        invalidate_shopify_status_cache()
         st.rerun()
+
+    if sync_to_shopify:
+        if not is_shopify_configured():
+            st.warning("Shopify is not configured. Add credentials to `.streamlit/secrets.toml`.")
+        elif not filtered_rows:
+            st.warning(f"No products with status **{stock_filter}** to sync.")
+        else:
+            with st.spinner(f"Syncing {len(filtered_rows)} product(s) to Shopify..."):
+                sync_results = sync_tracked_rows_to_shopify(filtered_rows)
+            synced_count, failed_results = apply_shopify_sync_results(sync_results)
+            show_shopify_sync_summary(synced_count, failed_results)
+            invalidate_shopify_status_cache()
+            st.rerun()
+
+    if publish_to_shopify:
+        if not is_shopify_configured():
+            st.warning("Shopify is not configured. Add credentials to `.streamlit/secrets.toml`.")
+        elif not filtered_rows:
+            st.warning(f"No products with status **{stock_filter}** to publish.")
+        else:
+            progress = st.progress(0.0, text="Fetching from Markaz...")
+            status_container = st.empty()
+            status_container.caption(f"Fetching **{len(filtered_rows)}** product(s) from Markaz...")
+            products, _, fetch_failed = fetch_markaz_products_from_tracked_rows(filtered_rows)
+            progress.progress(0.5, text="Publishing to Shopify...")
+            status_container.caption(f"Publishing **{len(products)}** product(s) to Shopify...")
+            publish_results = publish_products_to_shopify(products)
+            created_count, updated_count, publish_failed, publish_warnings = apply_shopify_publish_results(publish_results)
+            progress.progress(1.0, text="Done.")
+            status_container.caption("Finished.")
+            store_shopify_publish_feedback(created_count, updated_count, publish_failed, publish_warnings)
+            for link, error in fetch_failed:
+                st.warning(f"Markaz fetch failed: {link[:70]}... — {error}")
+            invalidate_shopify_status_cache()
+            st.rerun()
 
     if send_to_converter:
         if not filtered_rows:
@@ -495,51 +867,8 @@ def render_tracked_products_tab():
         else:
             progress = st.progress(0.0, text="Fetching products from Markaz...")
             status_container = st.empty()
-            products = []
-            processed_urls = set()
-            failed = []
-            total = len(filtered_rows)
-
-            with sync_playwright() as playwright:
-                browser = launch_browser_for_serverless(playwright)
-                for index, row in enumerate(filtered_rows):
-                    link = row.get('markaz_url', '').strip()
-                    status_container.caption(f"**Product {index + 1} of {total}** — fetching...")
-                    progress.progress((index + 1) / total, text=f"Product {index + 1} of {total}")
-                    if not link:
-                        continue
-
-                    context = None
-                    try:
-                        context = browser.new_context(
-                            permissions=[],
-                            ignore_https_errors=True,
-                            viewport={'width': 1920, 'height': 1080},
-                        )
-                        page = context.new_page()
-                        product_data = scrape_product_from_page(page, link)
-                        if product_data.get('status') == 'success':
-                            apply_default_pricing_rules(product_data)
-                            products.append(product_data)
-                            processed_urls.add(link)
-                        else:
-                            failed.append((link, product_data.get('status', 'Unknown error')))
-                    except Exception as exc:
-                        failed.append((link, str(exc)))
-                    finally:
-                        if context:
-                            try:
-                                context.close()
-                            except Exception:
-                                pass
-                    if index < total - 1:
-                        time.sleep(0.5)
-
-                try:
-                    browser.close()
-                except Exception:
-                    pass
-
+            status_container.caption(f"Fetching **{len(filtered_rows)}** product(s) from Markaz...")
+            products, processed_urls, failed = fetch_markaz_products_from_tracked_rows(filtered_rows)
             progress.progress(1.0, text="Done.")
             status_container.caption("Finished.")
 
@@ -566,6 +895,8 @@ def render_tracked_products_tab():
     else:
         st.markdown(f"**{len(filtered_rows)}** shown of **{len(tracked_rows)}** saved URL(s)")
 
+    render_shopify_status_summary(tracked_rows, shopify_status_map)
+
     if not filtered_rows:
         st.info(f"No products with status **{stock_filter}**.")
         return
@@ -573,31 +904,129 @@ def render_tracked_products_tab():
     for row in filtered_rows:
         title = row.get('title') or 'Untitled product'
         stock_status = row.get('stock_status', 'unknown')
-        with st.expander(f"{format_stock_status_label(stock_status)} | {title}", expanded=False):
-            if row.get('shopify_handle'):
-                st.write("**Shopify Handle:**", row['shopify_handle'])
-            st.write("**URL:**", row.get('markaz_url'))
-            st.write("**Stock Status:**", format_stock_status_label(stock_status))
+        row_key = row.get('markaz_url') or row.get('id')
+        shopify_snapshot = shopify_status_map.get(row_key, {})
+        expander_label = (
+            f"{format_stock_status_label(stock_status)} | "
+            f"{format_shopify_status_label(shopify_snapshot)} | {title}"
+        )
+        with st.expander(expander_label, expanded=False):
+            st.write("**Markaz Stock Status:**", format_stock_status_label(stock_status))
+            render_shopify_green_field("Shopify Status", format_shopify_status_detail(shopify_snapshot))
+
+            if shopify_snapshot.get('on_shopify'):
+                if shopify_snapshot.get('shopify_handle'):
+                    st.write("**Shopify Handle:**", shopify_snapshot['shopify_handle'])
+                elif row.get('shopify_handle'):
+                    st.write("**Shopify Handle:**", row['shopify_handle'])
+                if shopify_snapshot.get('shopify_product_id'):
+                    render_shopify_green_field("Shopify Product ID", shopify_snapshot['shopify_product_id'])
+                if shopify_snapshot.get('published_at'):
+                    st.write("**Published on Shopify:**", shopify_snapshot['published_at'])
+                if shopify_snapshot.get('updated_at'):
+                    st.write("**Last Updated on Shopify:**", shopify_snapshot['updated_at'])
+                admin_url = shopify_snapshot.get('admin_url')
+                if admin_url:
+                    st.markdown(f"**Open in Shopify:** [{admin_url}]({admin_url})")
+            elif row.get('shopify_handle'):
+                st.write("**Shopify Handle (saved):**", row['shopify_handle'])
+                st.caption("Handle is saved locally but product was not found on Shopify.")
+
+            st.write("**Markaz URL:**", row.get('markaz_url'))
             if row.get('last_checked_at'):
-                st.write("**Last Checked:**", row['last_checked_at'])
+                st.write("**Last Checked (Markaz):**", row['last_checked_at'])
             if row.get('created_at'):
                 st.write("**Saved At:**", row['created_at'])
 
-            action_col1, action_col2 = st.columns(2)
+            action_col1, action_col2, action_col3, action_col4, action_col5 = st.columns(5)
             with action_col1:
                 if st.button("Refresh Status", key=f"refresh_tracked_{row['id']}", width='stretch'):
                     with st.spinner("Checking Markaz..."):
                         scraped = scrape_markaz_product(row['markaz_url'])
                     if scraped.get('status') == 'success':
                         update_tracked_product_from_scrape(row['markaz_url'], scraped)
-                        st.success("Status updated.")
+                        st.success("Markaz status updated.")
                         st.rerun()
                     else:
                         st.error(scraped.get('status', 'Failed to refresh status'))
             with action_col2:
+                if st.button(
+                    "Shopify Status",
+                    key=f"shopify_status_{row['id']}",
+                    width='stretch',
+                    disabled=not is_shopify_configured(),
+                    help="Fetch latest status from Shopify for this product.",
+                ):
+                    with st.spinner("Fetching Shopify status..."):
+                        refresh_shopify_status_for_row(row)
+                    st.success("Shopify status refreshed.")
+                    st.rerun()
+            with action_col3:
+                if st.button(
+                    "Sync Stock",
+                    key=f"sync_stock_{row['id']}",
+                    width='stretch',
+                    disabled=not is_shopify_configured(),
+                    help="Sync inventory and product status on Shopify.",
+                ):
+                    with st.spinner("Syncing stock to Shopify..."):
+                        sync_results = sync_tracked_rows_to_shopify([row])
+                    synced_count, failed_results = apply_shopify_sync_results(sync_results)
+                    if synced_count:
+                        st.success("Stock synced to Shopify.")
+                    show_shopify_sync_summary(synced_count, failed_results)
+                    invalidate_shopify_status_cache()
+                    st.rerun()
+            with action_col4:
+                if st.button(
+                    "Publish Shopify",
+                    key=f"publish_shopify_{row['id']}",
+                    width='stretch',
+                    disabled=not is_shopify_configured(),
+                    help="Fetch from Markaz and publish or update on Shopify.",
+                ):
+                    with st.spinner("Publishing to Shopify..."):
+                        products, _, fetch_failed = fetch_markaz_products_from_tracked_rows([row])
+                        if fetch_failed:
+                            for link, error in fetch_failed:
+                                st.warning(f"Markaz fetch failed: {link[:70]}... — {error}")
+                        if products:
+                            publish_results = publish_products_to_shopify(products)
+                            created_count, updated_count, publish_failed, publish_warnings = (
+                                apply_shopify_publish_results(publish_results)
+                            )
+                            store_shopify_publish_feedback(
+                                created_count, updated_count, publish_failed, publish_warnings
+                            )
+                            invalidate_shopify_status_cache()
+                            st.rerun()
+                        elif not fetch_failed:
+                            st.error("Could not fetch product data from Markaz.")
+            with action_col5:
                 if st.button("Delete", key=f"delete_tracked_{row['id']}", width='stretch'):
+                    shopify_delete_result = None
+                    if is_shopify_configured():
+                        with st.spinner("Deleting from Shopify..."):
+                            shopify_delete_result = delete_tracked_row_from_shopify(row)
+
                     delete_tracked_product(row['markaz_url'])
-                    st.success("Removed from Supabase.")
+                    invalidate_shopify_status_cache()
+
+                    if shopify_delete_result and shopify_delete_result.get('success'):
+                        if shopify_delete_result.get('skipped') or shopify_delete_result.get('not_found'):
+                            st.success(
+                                "Removed from tracked list. "
+                                f"{shopify_delete_result.get('message', 'No Shopify product was linked.')}"
+                            )
+                        else:
+                            st.success("Removed from tracked list and deleted from Shopify.")
+                    elif shopify_delete_result and not shopify_delete_result.get('success'):
+                        st.warning(
+                            "Removed from tracked list, but Shopify delete failed: "
+                            f"{shopify_delete_result.get('error', 'Unknown error')}"
+                        )
+                    else:
+                        st.success("Removed from tracked list.")
                     st.rerun()
 
 
@@ -1040,8 +1469,31 @@ def render_converter_tab():
         
         st.divider()
         
-        # Download CSV section
-        st.header("Download Shopify CSV")
+        st.header("Export to Shopify")
+        
+        export_col1, export_col2 = st.columns(2)
+        with export_col1:
+            publish_all = st.button(
+                "Publish All to Shopify",
+                type="primary",
+                key="publish_all_to_shopify",
+                disabled=not is_shopify_configured(),
+                help="Create products directly on your Shopify store (no CSV needed).",
+            )
+        with export_col2:
+            pass
+
+        if publish_all:
+            if not is_shopify_configured():
+                st.warning("Shopify is not configured. Add credentials to `.streamlit/secrets.toml`.")
+            else:
+                with st.spinner(f"Publishing {len(st.session_state.products_list)} product(s) to Shopify..."):
+                    publish_results = publish_products_to_shopify(st.session_state.products_list)
+                created_count, updated_count, publish_failed, publish_warnings = apply_shopify_publish_results(publish_results)
+                store_shopify_publish_feedback(created_count, updated_count, publish_failed, publish_warnings)
+                st.rerun()
+
+        st.subheader("Download Shopify CSV")
         
         # Define exact column order as required by Shopify
         column_order = [
@@ -1113,6 +1565,8 @@ def render_converter_tab():
 def main():
     st.title("Markaz to Shopify CSV Converter")
     st.markdown("Scrape Markaz product data and convert to Shopify-compatible CSV format.")
+
+    render_shopify_publish_feedback()
 
     converter_tab, tracked_tab = st.tabs(["Shopify Converter", "Tracked Products"])
 

@@ -127,6 +127,26 @@ def update_tracked_stock_status(markaz_url, stock_status, title=None, shopify_ha
     return rows[0] if rows else None
 
 
+def update_tracked_shopify_metadata(markaz_url, shopify_product_id=None, shopify_handle=None):
+    payload = {}
+    if shopify_product_id:
+        payload['shopify_product_id'] = str(shopify_product_id)
+    if shopify_handle:
+        payload['shopify_handle'] = shopify_handle
+    if not payload:
+        return None
+
+    client = get_supabase_client()
+    response = (
+        client.table(TABLE_NAME)
+        .update(payload)
+        .eq('markaz_url', markaz_url)
+        .execute()
+    )
+    rows = response.data or []
+    return rows[0] if rows else None
+
+
 def delete_tracked_product(markaz_url):
     client = get_supabase_client()
     client.table(TABLE_NAME).delete().eq('markaz_url', markaz_url).execute()

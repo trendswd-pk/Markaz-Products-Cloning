@@ -251,6 +251,36 @@ def extract_variants(page, product_ld=None):
     return option1_name, ['Default Title']
 
 
+def normalize_markaz_image_url(url):
+    """Use content.public CDN URLs — Shopify rejects static.markaz.app (wrong content-type)."""
+    if not url:
+        return ''
+    url = url.strip()
+    static_match = re.match(
+        r'https?://static\.markaz\.app/pakistan/products/([^?#]+)',
+        url,
+        re.IGNORECASE,
+    )
+    if static_match:
+        filename = static_match.group(1)
+        return f'https://content.public.markaz.app/markazimagevideo/public/products/{filename}'
+    return url
+
+
+def _is_valid_product_image(src):
+    if not src or '/thumbnails/' in src.lower():
+        return False
+    lowered = src.lower()
+    skip_tokens = ('logo', 'icon', 'avatar', 'placeholder', 'loading', 'markaz_logo')
+    return not any(token in lowered for token in skip_tokens)
+
+
+def _append_product_image(image_urls, src):
+    normalized = normalize_markaz_image_url(src)
+    if normalized and normalized not in image_urls:
+        image_urls.append(normalized)
+
+
 def extract_images(page, product_ld=None, url=''):
     image_urls = []
 
@@ -259,14 +289,12 @@ def extract_images(page, product_ld=None, url=''):
         if isinstance(images, str):
             images = [images]
         for src in images:
-            if src and '/thumbnails/' not in src.lower() and src not in image_urls:
-                image_urls.append(src)
-
-    if image_urls:
-        return image_urls
+            if _is_valid_product_image(src):
+                _append_product_image(image_urls, src)
 
     img_selectors = [
         'img[src*="content.public.markaz.app/markazimagevideo/public/products/"]',
+        'img[src*="static.markaz.app/pakistan/products/"]',
         '[class*="gallery"] img',
         '[class*="thumbnail"] img',
         '[class*="image"] img',
@@ -281,12 +309,8 @@ def extract_images(page, product_ld=None, url=''):
                     continue
                 if not src.startswith('http'):
                     src = urljoin(url, src)
-                if '/thumbnails/' in src.lower():
-                    continue
-                if src not in image_urls and not any(skip in src.lower() for skip in ['logo', 'icon', 'avatar', 'placeholder', 'loading']):
-                    image_urls.append(src)
-            if image_urls:
-                break
+                if _is_valid_product_image(src):
+                    _append_product_image(image_urls, src)
         except Exception:
             continue
 
