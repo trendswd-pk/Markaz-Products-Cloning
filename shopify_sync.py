@@ -1,9 +1,19 @@
+import os
+
 import requests
 
 from shopify_auth import get_shopify_access_token
 from shopify_config import DEFAULT_API_VERSION, get_shopify_credentials, is_shopify_configured
 
 DEFAULT_IN_STOCK_QTY = 50
+
+
+def _block_demo_shopify_api(action='access Shopify'):
+    if os.environ.get('MARKAZ_DEMO_MODE') != '1':
+        return
+    from demo_mode.demo_guard import block_real_shopify_api
+
+    block_real_shopify_api(action)
 
 
 class ShopifyAPIError(Exception):
@@ -29,6 +39,7 @@ class ShopifyClient:
         self._location_id = None
 
     def _request(self, method, path, **kwargs):
+        _block_demo_shopify_api(f'call Shopify API ({method} {path})')
         response = self.session.request(
             method,
             f'{self.base_url}/{path}',
@@ -188,6 +199,7 @@ class ShopifyClient:
 
 
 def get_shopify_client():
+    _block_demo_shopify_api('connect to Shopify')
     if not is_shopify_configured():
         raise RuntimeError(
             'Shopify is not configured. Add client_id + client_secret in .streamlit/secrets.toml '

@@ -1,5 +1,4 @@
-from copy import deepcopy
-
+from demo_mode.demo_guard import DEMO_SHOPIFY_ALERT, demo_shopify_handle
 from demo_mode.demo_store import update_tracked_shopify_metadata
 from demo_mode.dummy_data import build_dummy_shopify_status_map
 from shopify_publish import generate_shopify_handle
@@ -70,6 +69,7 @@ def sync_tracked_rows_to_shopify(tracked_rows):
             'product_status': product_status,
             'variants_updated': 1,
             'message': 'Demo stock sync simulated (no real Shopify API call).',
+            'demo_simulated': True,
         })
     return results
 
@@ -94,36 +94,45 @@ def delete_tracked_row_from_shopify(row):
     }
 
 
+def publish_product_to_shopify(product, client=None, fallback_index=0):
+    handle = demo_shopify_handle(
+        generate_shopify_handle(
+            product.get('title', ''),
+            product.get('base_sku', ''),
+            fallback_index=fallback_index,
+        )
+    )
+    title = product.get('title') or handle
+    product_id = f'9{abs(hash(handle)) % 10_000_000_000}'
+    markaz_url = product.get('url')
+    image_urls = product.get('image_urls') or []
+
+    if markaz_url:
+        update_tracked_shopify_metadata(
+            markaz_url,
+            shopify_product_id=product_id,
+            shopify_handle=handle,
+        )
+
+    return {
+        'success': True,
+        'action': 'updated' if fallback_index % 2 else 'created',
+        'title': title,
+        'shopify_handle': handle,
+        'shopify_product_id': product_id,
+        'markaz_url': markaz_url,
+        'stock_status': product.get('stock_status', 'in_stock'),
+        'images_count': len(image_urls),
+        'images_added': max(len(image_urls) - 1, 0),
+        'demo_simulated': True,
+        'message': DEMO_SHOPIFY_ALERT,
+    }
+
+
 def publish_products_to_shopify(products):
     results = []
     for index, product in enumerate(products):
-        handle = generate_shopify_handle(
-            product.get('title', ''),
-            product.get('base_sku', ''),
-            fallback_index=index,
+        results.append(
+            publish_product_to_shopify(product, fallback_index=index)
         )
-        title = product.get('title') or handle
-        product_id = f'9{abs(hash(handle)) % 10_000_000_000}'
-        markaz_url = product.get('url')
-        image_urls = product.get('image_urls') or []
-
-        if markaz_url:
-            update_tracked_shopify_metadata(
-                markaz_url,
-                shopify_product_id=product_id,
-                shopify_handle=handle,
-            )
-
-        results.append({
-            'success': True,
-            'action': 'updated' if index % 2 else 'created',
-            'title': title,
-            'shopify_handle': handle,
-            'shopify_product_id': product_id,
-            'markaz_url': markaz_url,
-            'stock_status': product.get('stock_status', 'in_stock'),
-            'images_count': len(image_urls),
-            'images_added': max(len(image_urls) - 1, 0),
-            'message': 'Demo publish simulated (no real Shopify API call).',
-        })
     return results

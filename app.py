@@ -579,8 +579,12 @@ def apply_shopify_sync_results(results):
 
 
 def show_shopify_sync_summary(synced_count, failed_results):
+    if os.environ.get('MARKAZ_DEMO_MODE') == '1':
+        from demo_mode.demo_guard import DEMO_SHOPIFY_ALERT
+
+        st.warning(DEMO_SHOPIFY_ALERT)
     if synced_count:
-        st.success(f"Synced **{synced_count}** product(s) to Shopify.")
+        st.success(f"Synced **{synced_count}** product(s) to Shopify (simulated).")
     for result in failed_results:
         label = result.get('title') or result.get('shopify_handle') or result.get('markaz_url', 'Product')
         st.warning(f"Shopify sync skipped/failed for **{label}**: {result.get('error', 'Unknown error')}")
@@ -666,9 +670,15 @@ def render_shopify_publish_feedback():
 
 
 def show_shopify_publish_summary(created_count, updated_count, failed_results, warning_results=None):
+    if os.environ.get('MARKAZ_DEMO_MODE') == '1':
+        from demo_mode.demo_guard import DEMO_SHOPIFY_ALERT
+
+        st.warning(DEMO_SHOPIFY_ALERT)
+
     if created_count or updated_count:
+        success_label = 'simulated' if os.environ.get('MARKAZ_DEMO_MODE') == '1' else 'complete'
         st.success(
-            f"Shopify publish complete. **Created:** {created_count}, **Updated:** {updated_count}."
+            f"Shopify publish {success_label}. **Created:** {created_count}, **Updated:** {updated_count}."
         )
     elif failed_results:
         st.error("No products were published to Shopify. See error details below.")
@@ -690,6 +700,11 @@ def show_shopify_publish_summary(created_count, updated_count, failed_results, w
 
 
 def fetch_markaz_products_from_tracked_rows(tracked_rows):
+    if os.environ.get('MARKAZ_DEMO_MODE') == '1':
+        from demo_mode.demo_markaz import fetch_demo_products_from_tracked_rows
+
+        return fetch_demo_products_from_tracked_rows(tracked_rows)
+
     products = []
     processed_urls = set()
     failed = []

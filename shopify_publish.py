@@ -1,3 +1,4 @@
+import os
 import re
 from html import escape
 
@@ -7,6 +8,14 @@ from shopify_config import is_shopify_configured
 from shopify_sync import DEFAULT_IN_STOCK_QTY, ShopifyAPIError, get_shopify_client
 
 VENDOR_NAME = 'Markaz'
+
+
+def _block_demo_shopify_api(action='publish to Shopify'):
+    if os.environ.get('MARKAZ_DEMO_MODE') != '1':
+        return
+    from demo_mode.demo_guard import block_real_shopify_api
+
+    block_real_shopify_api(action)
 
 
 def slugify(text):
@@ -192,6 +201,7 @@ def build_shopify_product_payload(product, handle):
 
 
 def publish_product_to_shopify(product, client=None, fallback_index=0):
+    _block_demo_shopify_api('publish products to Shopify')
     client = client or get_shopify_client()
     handle = generate_shopify_handle(
         product.get('title', ''),
@@ -305,6 +315,7 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
 
 
 def publish_products_to_shopify(products):
+    _block_demo_shopify_api('publish products to Shopify')
     if not is_shopify_configured():
         raise RuntimeError('Shopify is not configured.')
 

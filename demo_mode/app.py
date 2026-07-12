@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from demo_mode.bootstrap import activate_demo_mode
+from demo_mode.bootstrap import activate_demo_mode, rebind_app_module
 
 activate_demo_mode()
 
@@ -32,5 +32,7 @@ if not is_authenticated():
 render_demo_banner()
 
 from app import main
+
+rebind_app_module()
 
 main()

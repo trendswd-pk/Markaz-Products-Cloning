@@ -1,3 +1,4 @@
+import os
 import time
 
 import requests
@@ -31,6 +32,10 @@ def _is_placeholder(value):
 
 
 def fetch_access_token_via_client_credentials():
+    if os.environ.get('MARKAZ_DEMO_MODE') == '1':
+        from demo_mode.demo_guard import block_real_shopify_api
+
+        block_real_shopify_api('authenticate with Shopify')
     creds = get_shopify_credentials()
     store_url = (
         creds.get('store_url', '')
@@ -72,6 +77,10 @@ def fetch_access_token_via_client_credentials():
 
 def get_shopify_access_token(force_refresh=False):
     """Return a valid Admin API access token (client credentials or legacy static token)."""
+    if os.environ.get('MARKAZ_DEMO_MODE') == '1':
+        from demo_mode.demo_guard import block_real_shopify_api
+
+        block_real_shopify_api('authenticate with Shopify')
     creds = get_shopify_credentials()
     client_id = (creds.get('client_id') or '').strip()
     client_secret = (creds.get('client_secret') or '').strip()

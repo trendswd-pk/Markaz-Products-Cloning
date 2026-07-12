@@ -14,7 +14,7 @@ def render_demo_banner():
             margin-bottom: 1rem;
         ">
             <strong>Demo Mode</strong> — localStorage + local JSON storage.
-            Supabase and API routes are disabled. Shopify actions are simulated.
+            Supabase and live Markaz scraping are disabled. Shopify actions are simulated only.
         </div>
         """,
         unsafe_allow_html=True,

@@ -29,9 +29,23 @@ def activate_demo_mode():
     shopify_sync.sync_tracked_rows_to_shopify = demo_shopify.sync_tracked_rows_to_shopify
     shopify_sync.delete_tracked_row_from_shopify = demo_shopify.delete_tracked_row_from_shopify
 
+    shopify_publish.get_shopify_client = demo_shopify.get_shopify_client
+    shopify_publish.publish_product_to_shopify = demo_shopify.publish_product_to_shopify
     shopify_publish.publish_products_to_shopify = demo_shopify.publish_products_to_shopify
 
     auth_config.is_auth_configured = demo_auth.is_auth_configured
     auth_config.get_auth_credentials = demo_auth.get_auth_credentials
     auth.render_login_page = demo_auth.render_login_page
     auth.verify_login = demo_auth.verify_login
+
+
+def rebind_app_module():
+    """Re-bind names imported into app.py (guards against stale module references)."""
+    import app as app_module
+    from demo_mode import demo_shopify
+
+    app_module.publish_products_to_shopify = demo_shopify.publish_products_to_shopify
+    app_module.sync_tracked_rows_to_shopify = demo_shopify.sync_tracked_rows_to_shopify
+    app_module.fetch_shopify_status_map = demo_shopify.fetch_shopify_status_map
+    app_module.delete_tracked_row_from_shopify = demo_shopify.delete_tracked_row_from_shopify
+    app_module.get_shopify_client = demo_shopify.get_shopify_client
