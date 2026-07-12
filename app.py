@@ -8,7 +8,9 @@ import time
 from html import escape
 from pathlib import Path
 
+from auth import init_auth_session, is_authenticated, render_login_page, render_logout_control
 from markaz_scraper import launch_browser_for_serverless, scrape_product_from_page, scrape_markaz_product
+from pricing_rules import get_default_price_adjustments
 from shopify_config import is_shopify_configured
 from shopify_sync import (
     delete_tracked_row_from_shopify,
@@ -52,6 +54,8 @@ if 'converter_import_message' not in st.session_state:
     st.session_state.converter_import_message = None
 if 'shopify_publish_feedback' not in st.session_state:
     st.session_state.shopify_publish_feedback = None
+
+init_auth_session()
 
 def slugify(text):
     """Convert text to URL-friendly handle"""
@@ -419,12 +423,9 @@ def update_tracked_product_from_scrape(markaz_url, scraped_data):
 
 def apply_default_pricing_rules(product_data):
     fetched_price = float(product_data.get('price', 0))
-    if fetched_price < 2000:
-        default_variant_adjustment = 500.0
-    else:
-        default_variant_adjustment = 1000.0
-    product_data['variant_price_adjustment'] = default_variant_adjustment
-    product_data['compare_at_price_adjustment'] = default_variant_adjustment + 1500.0
+    variant_adjustment, compare_at_adjustment = get_default_price_adjustments(fetched_price)
+    product_data['variant_price_adjustment'] = variant_adjustment
+    product_data['compare_at_price_adjustment'] = compare_at_adjustment
     return product_data
 
 
@@ -1192,11 +1193,9 @@ def render_converter_tab():
                             new_product_data = scrape_product_from_page(page, link)
                             if new_product_data.get("status") == "success":
                                 fetched_price = float(new_product_data.get("price", 0))
-                                if fetched_price < 2000:
-                                    default_variant_adjustment = 500.0
-                                else:
-                                    default_variant_adjustment = 1000.0
-                                default_compare_at_adjustment = default_variant_adjustment + 1500.0
+                                default_variant_adjustment, default_compare_at_adjustment = (
+                                    get_default_price_adjustments(fetched_price)
+                                )
                                 new_product_data["variant_price_adjustment"] = default_variant_adjustment
                                 new_product_data["compare_at_price_adjustment"] = default_compare_at_adjustment
                                 st.session_state.products_list.append(new_product_data)
@@ -1235,11 +1234,9 @@ def render_converter_tab():
                     product_data = scrape_markaz_product(first_url)
                     if product_data['status'] == 'success':
                         fetched_price = float(product_data.get('price', 0))
-                        if fetched_price < 2000:
-                            default_variant_adjustment = 500.0
-                        else:
-                            default_variant_adjustment = 1000.0
-                        default_compare_at_adjustment = default_variant_adjustment + 1500.0
+                        default_variant_adjustment, default_compare_at_adjustment = (
+                            get_default_price_adjustments(fetched_price)
+                        )
                         product_data['variant_price_adjustment'] = default_variant_adjustment
                         product_data['compare_at_price_adjustment'] = default_compare_at_adjustment
                         st.session_state.products_list.append(product_data)
@@ -1288,16 +1285,10 @@ def render_converter_tab():
             fetched_price = float(product_data.get('price', 0))
             st.info(f"**Fetched Price:** Rs. {fetched_price:,.2f}")
             
-            # Calculate default values based on previous pricing rules
-            # Rule: If price < 2000, add 500; else add 1000
-            if fetched_price < 2000:
-                default_variant_adjustment = 500.0
-            else:
-                default_variant_adjustment = 1000.0
-            
-            # Rule: Compare At Price = Variant Price + 1500
-            # So adjustment = Variant Adjustment + 1500
-            default_compare_at_adjustment = default_variant_adjustment + 1500.0
+            # Calculate default values based on pricing rules
+            default_variant_adjustment, default_compare_at_adjustment = (
+                get_default_price_adjustments(fetched_price)
+            )
             
             # Variant Price Adjustment (with default value from pricing rules)
             variant_adjustment = st.number_input(
@@ -1563,6 +1554,7 @@ def render_converter_tab():
 
 
 def main():
+    render_logout_control()
     st.title("Markaz to Shopify CSV Converter")
     st.markdown("Scrape Markaz product data and convert to Shopify-compatible CSV format.")
 
@@ -1578,4 +1570,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if not is_authenticated():
+        render_login_page()
+        st.stop()
     main()

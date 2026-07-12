@@ -2,6 +2,7 @@ import re
 from html import escape
 
 from markaz_scraper import normalize_markaz_image_url
+from pricing_rules import COMPARE_AT_EXTRA, get_default_price_adjustments
 from shopify_config import is_shopify_configured
 from shopify_sync import DEFAULT_IN_STOCK_QTY, ShopifyAPIError, get_shopify_client
 
@@ -122,9 +123,9 @@ def _pricing_for_product(product):
     compare_adjustment = float(product.get('compare_at_price_adjustment', 0) or 0)
 
     if variant_adjustment == 0:
-        variant_adjustment = 500.0 if original_price < 2000 else 1000.0
+        variant_adjustment, _ = get_default_price_adjustments(original_price)
     if compare_adjustment == 0:
-        compare_adjustment = variant_adjustment + 1500.0
+        compare_adjustment = variant_adjustment + COMPARE_AT_EXTRA
 
     return {
         'original_price': original_price,
