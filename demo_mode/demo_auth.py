@@ -86,6 +86,9 @@ def render_login_page():
                 st.session_state.authenticated = True
                 st.session_state.auth_username = username.strip()
                 seed_dummy_data_if_empty(username.strip())
+                from auth import persist_auth_token
+
+                persist_auth_token(username.strip())
                 st.rerun()
             else:
                 st.error("Invalid demo username or password.")
