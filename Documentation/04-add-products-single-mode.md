@@ -10,7 +10,7 @@ Add one Markaz product at a time. Optionally preview and adjust pricing before a
 
 ### Step 1: Switch to Single mode
 
-1. Go to **Shopify Converter** tab
+1. Go to **Shopify Converter** section
 2. Click **Single** button (next to "Add Products" heading)
 3. Caption changes to: *Single product mode — enter one URL below.*
 

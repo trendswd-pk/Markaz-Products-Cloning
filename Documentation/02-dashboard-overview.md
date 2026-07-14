@@ -6,17 +6,15 @@
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Signed in as admin                    [Logout]           │
+│  Signed in as admin                         [Logout]    │
 │  Markaz to Shopify CSV Converter                        │
 │  Scrape Markaz product data and convert to Shopify...   │
 │                                                         │
 │  [Shopify publish feedback banner — if any]             │
 │                                                         │
-│  ┌──────────────────┬──────────────────────┐           │
-│  │ Shopify Converter│ Tracked Products     │           │
-│  └──────────────────┴──────────────────────┘           │
+│  (○) Shopify Converter   (○) Tracked Products           │
 │                                                         │
-│  (Tab content here)                                     │
+│  (Active section content here)                          │
 └─────────────────────────────────────────────────────────┘
 ```
 
@@ -40,18 +38,20 @@ After a Shopify publish action, a green/yellow/red feedback banner may appear at
 Click **Dismiss publish results** to hide it.  
 Details: [12-shopify-publish-feedback.md](./12-shopify-publish-feedback.md)
 
-### Step 4: Choose a tab
+### Step 4: Choose a section
 
-| Tab | Use for |
-|-----|---------|
+Use the horizontal radio at the top (not Streamlit tabs). Only the selected section runs — this reduces Supabase and Shopify API traffic.
+
+| Section | Use for |
+|---------|---------|
 | **Shopify Converter** | Scrape Markaz URLs, build product list, CSV export, publish |
-| **Tracked Products** | View saved URLs, stock status, Shopify sync |
+| **Tracked Products** | View saved URLs, stock/Shopify filters, sync, publish, delete |
 
 ### Step 5: Start working
 
-- New products → **Shopify Converter** tab  
+- New products → **Shopify Converter**  
   See [03-shopify-converter-tab.md](./03-shopify-converter-tab.md)
-- Saved products → **Tracked Products** tab  
+- Saved products → **Tracked Products**  
   See [09-tracked-products-tab.md](./09-tracked-products-tab.md)
 
 ## Two main workflows
@@ -70,7 +70,9 @@ While the app is open, these persist in your browser session:
 |------|---------|
 | `products_list` | Products in Converter ready for CSV/publish |
 | `processed_urls` | Prevents duplicate URL adds |
+| `tracked_rows_cache` | Cached Supabase tracked list |
 | `shopify_status_map` | Cached Shopify status for Tracked Products |
 | `shopify_publish_feedback` | Last publish result message |
+| Auth query `?auth=` | Keeps login across page refreshes |
 
-**Note:** Converter product list clears when you close the browser tab. Tracked Products persist in Supabase.
+**Note:** Converter product list clears when the Streamlit session ends without restore. Tracked Products persist in Supabase. Login can survive refresh via the signed auth token.

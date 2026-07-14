@@ -133,7 +133,7 @@ Every Shopify action also shows:
 
 ### Step 1: Login as `demo`
 
-### Step 2: Open **Tracked Products** tab
+### Step 2: Open **Tracked Products** section
 
 See 3 dummy products with simulated Shopify status.
 
@@ -141,7 +141,7 @@ See 3 dummy products with simulated Shopify status.
 
 Yellow warning + simulated success — **no real Shopify call**.
 
-### Step 4: Open **Shopify Converter** tab
+### Step 4: Open **Shopify Converter** section
 
 1. Paste any Markaz product URL  
 2. Click **Fetch Product Data** → preview from simulated data  
@@ -184,7 +184,7 @@ No secrets required. Login: `demo` / `demo123`
 ```
 demo_mode/
 ├── app.py              # Entry point (login + banner + demo_main)
-├── demo_main.py        # Standalone demo UI (converter + tracked tabs)
+├── demo_main.py        # Standalone demo UI (converter + tracked sections)
 ├── bootstrap.py        # Patches auth for demo login
 ├── demo_auth.py        # Login page with visible credentials
 ├── demo_scrape.py      # Simulated Markaz fetch from URL

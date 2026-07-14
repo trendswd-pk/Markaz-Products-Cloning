@@ -1,297 +1,181 @@
-# 🛍️ Markaz to Shopify CSV Converter
+# Markaz to Shopify Converter
 
-A powerful web application that scrapes product data from Markaz marketplace and converts it into Shopify-compatible CSV format. Available as both a Streamlit web app and a Vercel serverless API.
+Scrape product data from [Markaz](https://www.markaz.app), export Shopify-ready CSV, track URLs in Supabase, and publish or sync stock directly to Shopify. Store vendor name: **at One Spot**.
 
-## ✨ Features
+Full step-by-step guides: **[Documentation/](./Documentation/README.md)**  
+Recent changes: **[Documentation/CHANGELOG.md](./Documentation/CHANGELOG.md)**
 
-- **Web Scraping**: Uses Playwright to scrape product data from Markaz product pages, handling JavaScript-rendered content
-- **Product Data Extraction**:
-  - Product Title, Description, Price, and Images
-  - Product Code (Base SKU)
-  - Product Variants (Size/Color) with automatic detection
-  - Breadcrumb Navigation (Categories and Tags)
-- **Shopify CSV Generation**:
-  - All 48 required Shopify columns in exact order
-  - Automatic Handle generation: `[slugified-title]-[product-code]`
-  - Custom pricing engine (adds 500 if price < 2000, else adds 1000)
-  - Variant handling with unique SKUs
-  - Multiple images support
-  - Fixed inventory quantity (50 units)
-- **Bulk Processing**: Add multiple products to a list and export all at once
-- **User-Friendly Interface**: Clean Streamlit UI with product preview and CSV download
+---
 
-## 🚀 Quick Start
+## Features
 
-### Local Development
+- **Markaz scraping** (Playwright) — title, description, price, images, SKU, variants, breadcrumbs, stock status
+- **Add modes** — Single product URL, Multiple URLs, or **Category** page + page range
+- **Shopify CSV** — all 48 required columns; Vendor = `at One Spot`
+- **Direct Shopify publish** — create/update products, images, inventory, status
+- **Tracked Products** (Supabase) — auto-save on add; Markaz + Shopify filters; pagination (50/page); bulk refresh, sync, publish, delete
+- **Login** — credentials in secrets; session token survives refresh for 14 days
+- **Demo mode** — simulated scrape/Shopify with no secrets or Playwright
+- **Pricing rules** — sale + compare-at markups (editable per product)
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd Markaz-Products-Cloning
-   ```
+---
 
-2. **Create a virtual environment**
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
+## Quick Start
 
-3. **Install dependencies**
-   ```bash
-   pip install -r requirements.txt
-   playwright install chromium
-   ```
+### 1. Clone and install
 
-4. **Run the Streamlit app**
-   ```bash
-   streamlit run app.py
-   ```
+```bash
+git clone <repository-url>
+cd Markaz-Products-Cloning
+python3 -m venv venv
+source venv/bin/activate   # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+playwright install chromium
+```
 
-   The app will open at `http://localhost:8501`
+### 2. Configure secrets
 
-## 📦 Project Structure
+```bash
+cp .streamlit/secrets.toml.example .streamlit/secrets.toml
+```
+
+Edit `.streamlit/secrets.toml` with `[app_login]`, `[supabase]`, and `[shopify]`.  
+See [Documentation/14-configuration-setup.md](./Documentation/14-configuration-setup.md).
+
+### 3. Run
+
+**Production** (real Markaz + Shopify + Supabase):
+
+```bash
+streamlit run app.py
+```
+
+**Demo** (no secrets / no Playwright required):
+
+```bash
+streamlit run demo_mode/app.py
+```
+
+Open **http://localhost:8501**
+
+---
+
+## How to use (production)
+
+1. **Sign in** with `[app_login]` credentials.
+2. Choose a section:
+   - **Shopify Converter** — scrape and build a product list, then CSV download or Publish All
+   - **Tracked Products** — manage saved URLs, filter, sync, publish, or delete
+3. **Add products** via Single, Multiple, or Category mode.
+4. **Export** — Download Shopify CSV and import in Admin, or publish via API.
+5. **Track** — products auto-save to Supabase; use filters and bulk actions as needed.
+
+---
+
+## Project structure
 
 ```
 Markaz-Products-Cloning/
-├── app.py                 # Main Streamlit application
-├── api/
-│   └── index.py          # Vercel serverless function (API endpoint)
-├── requirements.txt       # Python dependencies
-├── packages.txt          # OS-level dependencies (for Streamlit Cloud)
-├── vercel.json           # Vercel deployment configuration
-├── pyproject.toml        # Python project configuration
-├── runtime.txt          # Python version specification
-├── .vercelignore        # Files to ignore for Vercel
-├── .gitignore          # Files to ignore for Git
-└── README.md            # This file
+├── app.py                  # Production Streamlit UI
+├── markaz_scraper.py       # Markaz scraping (product + category)
+├── shopify_publish.py      # Create/update products on Shopify
+├── shopify_sync.py         # Inventory & status sync
+├── shopify_auth.py         # Shopify OAuth client credentials
+├── supabase_store.py       # Tracked products persistence
+├── pricing_rules.py        # Sale / compare-at markups
+├── auth.py                 # Login + session token
+├── demo_mode/              # Standalone demo (simulated)
+├── api/index.py            # Optional Vercel scrape API
+├── Documentation/          # English user guides + changelog
+├── requirements.txt
+└── packages.txt            # System deps (Streamlit Cloud)
 ```
 
-## 🌐 Deployment Options
+---
 
-### Option 1: Streamlit Community Cloud (Recommended for UI)
+## Pricing logic
 
-**Best for:** Full Streamlit web application with UI
+| Markaz price | Sale adjustment | Compare-at adjustment |
+|--------------|-----------------|------------------------|
+| &lt; 2000 | +500 | +2000 |
+| ≥ 2000 | +1500 | +3000 |
 
-1. **Push code to GitHub**
-   ```bash
-   git add .
-   git commit -m "Initial commit"
-   git push origin main
-   ```
+- Sale price = Markaz + sale adjustment  
+- Compare at = Markaz + compare-at adjustment  
+- Vendor on CSV and API publish: **at One Spot**
 
-2. **Deploy on Streamlit Cloud**
-   - Visit: https://streamlit.io/cloud
-   - Sign in with GitHub
-   - Click "New app"
-   - Select repository and branch
-   - Main file: `app.py`
-   - Click "Deploy"
+Details: [Documentation/13-pricing-rules.md](./Documentation/13-pricing-rules.md)
 
-**Requirements:**
-- ✅ `requirements.txt` (includes streamlit, playwright, pandas)
-- ✅ `packages.txt` (system dependencies for Playwright)
-- ✅ `app.py` in root directory
+---
 
-**Features:**
-- Full Streamlit UI
-- Free tier available
-- Automatic browser installation
-- WebSocket support
+## CSV format (summary)
 
-### Option 2: Vercel (API Endpoint)
+- Handle: `{slugified-title}-{base-sku}`
+- Vendor: `at One Spot`
+- Variants with unique SKUs; multiple image rows
+- Inventory qty 50 (in stock) / 0 (out of stock); policy `continue`
+- Status: `active` or `draft` from stock
 
-**Best for:** Serverless API endpoint for scraping
+---
 
-1. **Push code to GitHub**
+## Deployment
 
-2. **Deploy on Vercel**
-   - Visit: https://vercel.com
-   - Import GitHub repository
-   - Vercel auto-detects Python function
+### Streamlit Community Cloud
 
-**Configuration:**
-- ✅ `vercel.json` configured
-- ✅ `api/index.py` as serverless function
-- ✅ Minimal dependencies (playwright only)
+1. Push to GitHub  
+2. Deploy at [streamlit.io/cloud](https://streamlit.io/cloud) — main file `app.py`  
+3. Add secrets in the Cloud app settings (`app_login`, `supabase`, `shopify`)  
+4. Ensure `requirements.txt` and `packages.txt` are present  
 
-**Usage:**
-```
-https://your-app.vercel.app?url=PRODUCT_URL
-```
+### Vercel (optional scrape API)
 
-**Features:**
-- Fast serverless API
-- JSON responses
-- Free tier available
-- No WebSocket needed
-
-## 📖 Full Documentation
-
-Step-by-step guides for every page and sub-page: **[Documentation/](./Documentation/README.md)**
-
-
-### Using the Streamlit App
-
-1. **Add Products**:
-   - Paste a Markaz product URL in the input field
-   - Click "Add to List" to scrape and add the product
-   - Repeat for multiple products
-
-2. **Review Products**:
-   - View all added products in the expandable list
-   - Check extracted data: Title, SKU, Variants, Price, Images
-   - Remove products if needed
-
-3. **Download CSV**:
-   - Click "Download Shopify CSV" to export all products
-   - The CSV file will be ready for direct import into Shopify
-
-### Using the Vercel API
-
-**Endpoint:**
 ```
 GET https://your-app.vercel.app?url=PRODUCT_URL
 ```
 
-**Response:**
-```json
-{
-  "title": "Product Title",
-  "description": "Product Description",
-  "price": "1500",
-  "base_sku": "MZ51500000049KSAA",
-  "variants": ["Small", "Medium", "Large"],
-  "image_urls": ["https://..."],
-  "breadcrumb_items": ["Marketplace", "Men", "Track Suit"],
-  "status": "success"
-}
-```
-
-## 📋 CSV Format Details
-
-The generated CSV includes all 48 Shopify-required columns:
-
-- **Product Information**: Handle, Title, Body (HTML), Vendor, Standard Product Type
-- **Variants**: Option1 Name/Value, Variant SKU, Variant Price, Variant Inventory Qty
-- **Pricing**: Cost per item (original price), Variant Price (with markup)
-- **Images**: Image Src, Image Position, Image Alt Text
-- **SEO**: SEO Title, SEO Description
-- **Tags**: Comma-separated breadcrumb categories
-- **Inventory**: Fixed at 50 units, Inventory Policy: 'continue'
-
-### Pricing Logic
-
-- If original price < 2000: Add 500
-- If original price >= 2000: Add 1000
-- Original price stored in "Cost per item"
-- Calculated price stored in "Variant Price"
-
-### Variant Handling
-
-- Automatically detects Size or Color variants
-- Creates separate CSV rows for each variant
-- Variant SKU format: `[Base SKU]-[Variant Value]`
-- Example: `MZ51500000049KSAA-Small`, `MZ51500000049KSAA-Medium`
-
-### Breadcrumb Extraction
-
-- Extracts navigation path: `Marketplace / Men / Track Suit`
-- Tags: All breadcrumb items (comma-separated)
-- Standard Product Type: Second-to-last item
-- Filters out: Followers, Products count, Prices
-
-## 🛠️ Technical Details
-
-### Technologies Used
-
-- **Streamlit**: Web application framework
-- **Playwright**: Browser automation for scraping JavaScript-rendered content
-- **Pandas**: Data manipulation and CSV generation
-- **Python 3.12+**: Programming language
-
-### Dependencies
-
-**Python Packages** (`requirements.txt`):
-- `streamlit>=1.30.0` - Web framework
-- `playwright>=1.40.0` - Browser automation
-- `pandas>=2.0.0` - Data manipulation
-
-**System Packages** (`packages.txt` - for Streamlit Cloud):
-- Chromium browser dependencies (libnss3, libatk1.0-0, etc.)
-
-## 🔧 Configuration
-
-### Customization Options
-
-You can modify the following in `app.py`:
-
-- **Pricing Markup**: Edit the pricing logic in `create_shopify_row()` function
-- **Inventory Quantity**: Change the fixed inventory value (currently 50)
-- **Vendor Name**: Update the vendor name (currently 'Markaz')
-- **Handle Format**: Modify `generate_unique_handle()` function
-
-## 📝 Example
-
-**Input**: Markaz Product URL
-```
-https://www.shop.markaz.app/explore/product/Grey%20Mobile%20Phone%20Holder/579974
-```
-
-**Output**: Shopify CSV with:
-- Handle: `grey-mobile-phone-holder-mz51100000317afts`
-- Tags: `Marketplace, Beauty&Fashion, Cosmetics, Personal Care`
-- Standard Product Type: `Personal Care`
-- Variants: `Small, Medium, Large, X-Large` (if available)
-- Images: All product images with positions
-
-## ⚠️ Notes
-
-- The scraper uses headless browser automation, so scraping may take a few seconds per product
-- Ensure you have a stable internet connection
-- Some products may not have variants (will default to 'Default Title')
-- Breadcrumb extraction requires the page to have proper navigation structure
-- For Vercel deployment, browsers are installed at runtime (not during build)
-
-## 🐛 Troubleshooting
-
-### Common Issues
-
-1. **Playwright not installed**
-   ```bash
-   playwright install chromium
-   ```
-
-2. **Import errors**
-   - Ensure virtual environment is activated
-   - Reinstall dependencies: `pip install -r requirements.txt`
-
-3. **Scraping fails**
-   - Check if the URL is valid
-   - Verify internet connection
-   - The website structure may have changed
-
-4. **Vercel build fails (size limit)**
-   - Ensure only `playwright==1.40.0` in requirements.txt
-   - Check `.vercelignore` includes all unnecessary files
-   - Browsers install at runtime, not during build
-
-5. **Streamlit Cloud build fails**
-   - Verify `packages.txt` has all system dependencies
-   - Check `requirements.txt` has all Python packages
-   - Ensure `app.py` is in root directory
-
-## 📄 License
-
-This project is provided as-is for educational and commercial use.
-
-## 🤝 Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
-
-## 📧 Support
-
-For issues or questions, please open an issue on the GitHub repository.
+Uses `api/index.py` + `vercel.json`. Suitable for JSON scrape responses, not the full Streamlit dashboard.
 
 ---
 
-**Made with ❤️ for efficient e-commerce data migration**
+## Documentation index
+
+| Topic | Link |
+|-------|------|
+| Getting started | [00](./Documentation/00-getting-started.md) |
+| Login | [01](./Documentation/01-login-page.md) |
+| Converter / Category mode | [03](./Documentation/03-shopify-converter-tab.md), [16](./Documentation/16-add-products-category-mode.md) |
+| Tracked Products | [09](./Documentation/09-tracked-products-tab.md), [10](./Documentation/10-tracked-products-bulk-actions.md) |
+| Demo mode | [15](./Documentation/15-demo-mode.md) |
+| Configuration | [14](./Documentation/14-configuration-setup.md) |
+| Changelog | [CHANGELOG](./Documentation/CHANGELOG.md) |
+| Full index | [Documentation/README.md](./Documentation/README.md) |
+
+---
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| Port 8501 busy | `fuser -k 8501/tcp` then restart |
+| Playwright missing | `playwright install chromium` (production only) |
+| Login not configured | Add `[app_login]` to `.streamlit/secrets.toml` |
+| Logged out on refresh | Use latest build; URL should keep `?auth=...` after login |
+| Supabase / too many requests | Active section radio only; use **Reload list**; see changelog |
+| Demo crashes | Run `streamlit run demo_mode/app.py` — not `app.py` for demo |
+| Stale ImportError after code change | Fully stop the Streamlit process and restart |
+
+---
+
+## Notes
+
+- Scraping uses a headless browser; allow a few seconds per product or category page.
+- Do not commit `.streamlit/secrets.toml`.
+- Demo mode never calls real Shopify when `MARKAZ_DEMO_MODE=1`.
+
+## License
+
+Provided as-is for educational and commercial use.
+
+## Contributing
+
+Pull requests are welcome. For questions or bugs, open a GitHub issue.

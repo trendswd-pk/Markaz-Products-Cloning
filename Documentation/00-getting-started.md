@@ -58,10 +58,12 @@ See [01-login-page.md](./01-login-page.md).
 
 | Goal | Go to |
 |------|--------|
-| Scrape & download CSV | [Shopify Converter](./03-shopify-converter-tab.md) |
+| Scrape products / category pages | [Shopify Converter](./03-shopify-converter-tab.md), [Category mode](./16-add-products-category-mode.md) |
 | Save URLs for later | Add products → auto-saved to [Tracked Products](./09-tracked-products-tab.md) |
+| Filter, paginate, bulk delete | [Tracked Products](./09-tracked-products-tab.md), [Bulk actions](./10-tracked-products-bulk-actions.md) |
 | Publish directly to Shopify | [Export & Publish](./08-export-csv-and-publish.md) |
 | Try without real APIs | [Demo Mode](./15-demo-mode.md) |
+| What changed recently | [CHANGELOG](./CHANGELOG.md) |
 
 ## Project structure (main files)
 
@@ -85,4 +87,10 @@ See [01-login-page.md](./01-login-page.md).
 | Playwright error | `playwright install chromium` (production only) |
 | Demo crashes / segfault | Use `streamlit run demo_mode/app.py` — do not use `app.py` for demo |
 | Login not configured | Add `[app_login]` to secrets.toml |
+| Logged out on refresh | Update to latest auth; after login URL should contain `?auth=...` |
 | Supabase warning | Add `[supabase]` block to secrets.toml |
+| Too many Supabase requests | Use section radio (not dual tabs); list is session-cached — see [CHANGELOG](./CHANGELOG.md) |
+
+## Changelog
+
+See [CHANGELOG.md](./CHANGELOG.md) for dated feature and fix notes.

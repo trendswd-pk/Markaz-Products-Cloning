@@ -10,7 +10,7 @@ Paste many Markaz URLs at once and bulk-scrape them into the product list.
 
 ### Step 1: Switch to Multiple mode
 
-1. Go to **Shopify Converter** tab
+1. Go to **Shopify Converter** section
 2. Click **Multiple** button
 3. Caption changes to: *Multiple products mode — paste one URL per line below.*
 

@@ -42,6 +42,7 @@ Details: [12-shopify-publish-feedback.md](./12-shopify-publish-feedback.md)
 #### Step 4: Verify in Shopify Admin
 
 Products created with:
+- Vendor: **at One Spot**
 - Title, description, images
 - Variants with SKU, sale price, compare-at price
 - Inventory: 50 (in stock) or 0 (out of stock)
@@ -80,7 +81,7 @@ Shows all rows that will be in the export (variants + image rows).
 ### CSV includes
 
 - All **48 Shopify-required columns**
-- Handle, Title, Body HTML, Vendor, Tags
+- Handle, Title, Body HTML, Vendor (`at One Spot`), Tags
 - Variant SKU, Price, Compare At Price
 - Images (multiple rows per product)
 - Inventory Qty: 50, Policy: continue

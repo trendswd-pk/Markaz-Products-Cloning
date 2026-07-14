@@ -1,26 +1,27 @@
-# 09 — Tracked Products Tab
+# 09 — Tracked Products
 
-**Location:** Dashboard → Tab **Tracked Products**
+**Location:** Dashboard → section **Tracked Products**
 
 ## Purpose
 
-Persistently store Markaz product URLs, monitor stock status, view Shopify sync state, and run bulk operations.
+Persistently store Markaz product URLs, monitor stock and Shopify status, and run bulk operations.
 
 ## Page layout
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│  Tracked Products                            [🛍️ icon]  │
+│  Tracked Products          [🛍️] [Reload list]           │
 │  Markaz URLs auto-save here when you add in Converter   │
 │                                                         │
-│  Filter: ○ All  ○ In Stock  ○ Out of Stock  ○ Unknown  │
+│  Markaz stock: ○ All ○ In Stock ○ Out of Stock ○ Unknown│
+│  Shopify: ○ All ○ Not on Shopify ○ Active ○ Draft ○ Archived │
 │  ☑ Auto-sync to Shopify after Refresh All Status        │
 │                                                         │
 │  [Refresh All] [Refresh Shopify] [Send to Converter]    │
-│  [Sync Stock]  [Publish to Shopify]                     │
+│  [Sync Stock]  [Publish to Shopify] [Delete Filtered]   │
 │                                                         │
-│  N saved URL(s)                                         │
-│  Shopify: X of N found on store (Y active, Z draft)     │
+│  N matching / saved · Shopify summary                   │
+│  ← Prev | Page 1 of Y · showing 1–50 · 50/page | Next → │
 │                                                         │
 │  ▼ In Stock | Shopify: Active | Product Title           │
 │  ▼ Out of Stock | Shopify: Draft | Product Title        │
@@ -29,25 +30,26 @@ Persistently store Markaz product URLs, monitor stock status, view Shopify sync 
 
 ## Step-by-step: First visit
 
-### Step 1: Open Tracked Products tab
+### Step 1: Open Tracked Products
 
-Click second tab **Tracked Products**.
+Select **Tracked Products** in the top section radio.
 
 ### Step 2: Check Supabase connection
 
-If not configured → yellow warning and tab stops.  
+If not configured → yellow warning and section stops.  
 Configure: [14-configuration-setup.md](./14-configuration-setup.md)
 
 ### Step 3: See saved products or empty state
 
 **Empty:**
-> No tracked products yet. Add a product in the Converter tab...
+> No tracked products yet. Add a product in the Converter section...
 
-**With data:**
-List of expanders with format:
+**With data:** expanders formatted as  
 `{Markaz Stock} | {Shopify Status} | {Title}`
 
-### Step 4: Use stock filter
+### Step 4: Use filters
+
+**Markaz stock**
 
 | Filter | Shows |
 |--------|-------|
@@ -56,19 +58,50 @@ List of expanders with format:
 | Out of Stock | `stock_status = out_of_stock` |
 | Unknown | `stock_status = unknown` |
 
-### Step 5: Read Shopify summary line
+**Shopify status**
+
+| Filter | Shows |
+|--------|-------|
+| All | Every saved URL |
+| Not on Shopify | Not found on store (or no link) |
+| Active | On Shopify with status `active` |
+| Draft | On Shopify with status `draft` |
+| Archived | On Shopify with status `archived` |
+
+Both filters can be combined (example: In Stock + Draft).
+
+If Shopify filter looks stale, click **Refresh Shopify Status**.
+
+### Step 5: Pagination
+
+- List view shows **50 products per page**
+- Use **Prev** / **Next** (top and bottom)
+- Changing filters resets to page **1**
+- Bulk buttons still act on the **entire filtered set**, not only the current page
+
+### Step 6: Reload list (optional)
+
+**Reload list** forces a fresh Supabase fetch (skips session cache). Use after external DB changes.
+
+### Step 7: Read Shopify summary line
 
 Example:
 > Shopify: **3** of **4** tracked product(s) found on store (2 active, 1 draft).
 
 ## How products get here
 
-Automatically when you **Add to List** in Shopify Converter (if Supabase configured).
+Automatically when you **Add to List** in Shopify Converter (if Supabase is configured).
 
 Saved fields:
 - `markaz_url`, `title`, `stock_status`
 - `shopify_handle`, `shopify_product_id` (after publish)
 - `last_checked_at`, `created_at`
+
+## Performance notes
+
+- Tracked list is **session-cached** to protect Supabase free-tier quotas
+- Only the active dashboard section loads (radio, not dual tabs)
+- See [CHANGELOG.md](./CHANGELOG.md)
 
 ## Sub-pages
 
@@ -79,4 +112,4 @@ Saved fields:
 
 ## Shopify icon
 
-Green Shopify bag icon (top-right) appears when Shopify credentials are configured.
+Green Shopify bag icon appears when Shopify credentials are configured.

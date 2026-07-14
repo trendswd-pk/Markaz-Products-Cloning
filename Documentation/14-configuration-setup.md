@@ -51,7 +51,7 @@ key = "YOUR_SERVICE_ROLE_KEY"
 4. Paste into `secrets.toml`
 5. Restart app
 
-**Without Supabase:** Tracked Products tab shows warning. Converter still works.
+**Without Supabase:** Tracked Products section shows a warning. Converter still works.
 
 ---
 

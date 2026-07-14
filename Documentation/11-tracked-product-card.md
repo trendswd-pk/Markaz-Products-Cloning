@@ -1,6 +1,6 @@
 # 11 — Tracked Product Card
 
-**Location:** Tracked Products tab → each product expander
+**Location:** Tracked Products → each product expander (current pagination page)
 
 ## Expander label format
 

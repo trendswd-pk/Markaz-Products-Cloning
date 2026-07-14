@@ -1,11 +1,11 @@
 # 12 — Shopify Publish Feedback
 
-**Location:** Dashboard top — above tabs (after any publish action)
+**Location:** Dashboard top — above the section radio (after any publish action)
 
 ## Purpose
 
 Shows results of the last Shopify publish operation from:
-- **Publish All to Shopify** (Converter tab)
+- **Publish All to Shopify** (Converter)
 - **Publish to Shopify** (Tracked Products bulk)
 - **Publish Shopify** (single product card)
 
@@ -13,7 +13,7 @@ Shows results of the last Shopify publish operation from:
 
 ### Step 1: Locate banner
 
-Appears immediately below page title, above **Shopify Converter | Tracked Products** tabs.
+Appears immediately below page title, above **Shopify Converter | Tracked Products** section radio.
 
 ### Step 2: Read success message (green)
 
@@ -72,7 +72,7 @@ Click **Dismiss publish results** to hide the banner.
 
 Stored in `st.session_state.shopify_publish_feedback` until dismissed or new publish runs.
 
-Survives tab switches (Converter ↔ Tracked Products) but not browser close.
+Survives section switches (Converter ↔ Tracked Products) but not browser close.
 
 ---
 

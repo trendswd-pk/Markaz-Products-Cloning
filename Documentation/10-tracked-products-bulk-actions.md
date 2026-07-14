@@ -1,6 +1,6 @@
 # 10 — Tracked Products — Bulk Actions
 
-**Location:** Tracked Products tab → top button row
+**Location:** Tracked Products → top button row
 
 ## Buttons overview
 
@@ -11,6 +11,7 @@
 | **Send to Converter** | Re-fetch Markaz data → load Converter list |
 | **Sync Stock** | Update Shopify inventory/status for filtered products |
 | **Publish to Shopify** | Re-fetch from Markaz + publish filtered products |
+| **Delete Filtered** | Delete filtered products from Supabase and Shopify |
 
 ---
 
@@ -40,7 +41,7 @@ When checked, after refresh completes, inventory is synced to Shopify for all tr
 1. Click **Refresh Shopify Status**
 2. App calls Shopify API for each saved handle/product ID
 3. `shopify_status_map` cache updates
-4. Expander labels and details refresh on rerun
+4. Expander labels and Shopify filters refresh on rerun
 
 **Requires:** Shopify configured.
 
@@ -50,14 +51,14 @@ When checked, after refresh completes, inventory is synced to Shopify for all tr
 
 ### Step-by-step
 
-1. Apply desired **stock filter** first (e.g. only In Stock)
+1. Apply **Markaz stock** and/or **Shopify status** filters
 2. Click **Send to Converter**
 3. Progress: fetching each filtered URL from Markaz
 4. Products loaded into Converter `products_list`
-5. Green message at top of **Shopify Converter** tab
-6. Switch to Converter tab to review/edit/download
+5. Green message at top of **Shopify Converter**
+6. Switch to Converter to review/edit/download
 
-**Use case:** Re-build CSV for filtered in-stock products only.
+**Use case:** Rebuild CSV for a filtered subset (example: In Stock + Active).
 
 ---
 
@@ -65,7 +66,7 @@ When checked, after refresh completes, inventory is synced to Shopify for all tr
 
 ### Step-by-step
 
-1. Set stock filter (which products to sync)
+1. Set filters (which products to sync)
 2. Click **Sync Stock**
 3. Spinner: *Syncing N product(s) to Shopify...*
 4. For each product with a saved `shopify_handle`:
@@ -81,23 +82,49 @@ When checked, after refresh completes, inventory is synced to Shopify for all tr
 
 ### Step-by-step
 
-1. Set stock filter
+1. Set filters
 2. Click **Publish to Shopify**
 3. Phase 1: Fetch fresh data from Markaz (progress 0–50%)
 4. Phase 2: Publish to Shopify API (progress 50–100%)
 5. Feedback banner at dashboard top — [12-shopify-publish-feedback.md](./12-shopify-publish-feedback.md)
 
+Vendor on published products is **at One Spot**.
+
 ### Difference: Sync Stock vs Publish
 
 | Action | Updates existing | Creates new | Re-fetches Markaz |
-|--------|-----------------|-------------|-------------------|
+|--------|------------------|-------------|-------------------|
 | Sync Stock | Inventory + status only | No | No |
 | Publish | Details + images | Yes | Yes |
 
 ---
 
+## Delete Filtered
+
+### Step-by-step
+
+1. Apply filters so only products you want to remove are matched
+2. Click **Delete Filtered**
+3. Warning shows how many products will be deleted
+4. Click **Confirm Delete** (or **Cancel**)
+5. For each product:
+   - Delete from Shopify if linked
+   - Delete from Supabase tracked list
+6. Progress completes; success summary shows tracked vs Shopify delete counts
+
+**Warning:** This is permanent. Filters define the full set — not only the current pagination page.
+
+---
+
 ## Filter interaction
 
-All bulk actions except **Refresh All Status** and **Refresh Shopify Status** respect the current **stock filter**.
+| Button | Respects Markaz + Shopify filters? |
+|--------|-------------------------------------|
+| Refresh All Status | No (all tracked) |
+| Refresh Shopify Status | No (all tracked) |
+| Send to Converter | Yes |
+| Sync Stock | Yes |
+| Publish to Shopify | Yes |
+| Delete Filtered | Yes |
 
-Example: Filter **In Stock** → **Publish to Shopify** only publishes in-stock filtered products.
+Example: Filter **In Stock** + **Draft** → **Publish to Shopify** only publishes that subset.
