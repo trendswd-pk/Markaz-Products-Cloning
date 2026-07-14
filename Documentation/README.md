@@ -23,6 +23,7 @@ Step-by-step guides for every page and sub-page in the application.
 | 03 | [Shopify Converter Tab](./03-shopify-converter-tab.md) | Tab 1 — overview |
 | 04 | [Add Products — Single Mode](./04-add-products-single-mode.md) | Add Products → Single |
 | 05 | [Add Products — Multiple Mode](./05-add-products-multiple-mode.md) | Add Products → Multiple |
+| 16 | [Add Products — Category Mode](./16-add-products-category-mode.md) | Add Products → Category |
 | 06 | [Product Preview & Pricing](./06-product-preview-and-pricing.md) | After "Fetch Product Data" |
 | 07 | [Product List Management](./07-product-list-management.md) | Product List expanders |
 | 08 | [Export CSV & Publish](./08-export-csv-and-publish.md) | Export to Shopify section |

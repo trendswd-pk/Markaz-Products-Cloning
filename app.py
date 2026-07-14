@@ -20,6 +20,7 @@ from shopify_publish import publish_products_to_shopify
 from supabase_config import is_supabase_configured
 from supabase_store import (
     delete_tracked_product,
+    delete_tracked_products,
     list_tracked_products,
     update_tracked_shopify_metadata,
     update_tracked_stock_status,
@@ -46,9 +47,15 @@ def render_shopify_tab_icon():
 if _IS_DEMO:
     from demo_mode.demo_scrape import scrape_markaz_product_demo as scrape_markaz_product
     from demo_mode.demo_scrape import scrape_product_from_page_demo as scrape_product_from_page
+    from demo_mode.demo_scrape import scrape_category_product_urls_demo as scrape_category_product_urls
 else:
     from playwright.sync_api import sync_playwright
-    from markaz_scraper import launch_browser_for_serverless, scrape_product_from_page, scrape_markaz_product
+    from markaz_scraper import (
+        launch_browser_for_serverless,
+        scrape_category_product_urls,
+        scrape_markaz_product,
+        scrape_product_from_page,
+    )
 
 # Playwright Browser Installation: Install chromium browser if missing
 # Skipped in demo mode (demo uses simulated scrape, no browser needed)
@@ -73,7 +80,7 @@ if 'fetched_product_data' not in st.session_state:
 if 'show_product_dialog' not in st.session_state:
     st.session_state.show_product_dialog = False
 if 'add_mode' not in st.session_state:
-    st.session_state.add_mode = 'multiple'  # default: multiple; 'single' = one URL, 'multiple' = bulk URLs
+    st.session_state.add_mode = 'multiple'  # 'single' | 'multiple' | 'category'
 if 'converter_import_message' not in st.session_state:
     st.session_state.converter_import_message = None
 if 'shopify_publish_feedback' not in st.session_state:
@@ -426,6 +433,7 @@ def save_product_to_supabase(product_data):
             title=product_data.get('title'),
             shopify_handle=shopify_handle,
         )
+        invalidate_tracked_rows_cache()
         return True, None
     except Exception as exc:
         return False, str(exc)
@@ -437,12 +445,14 @@ def update_tracked_product_from_scrape(markaz_url, scraped_data):
         scraped_data.get('title', ''),
         scraped_data.get('base_sku', ''),
     )
-    return update_tracked_stock_status(
+    result = update_tracked_stock_status(
         markaz_url,
         scraped_data.get('stock_status', 'unknown'),
         title=scraped_data.get('title'),
         shopify_handle=shopify_handle,
     )
+    invalidate_tracked_rows_cache()
+    return result
 
 
 def apply_default_pricing_rules(product_data):
@@ -467,6 +477,35 @@ def get_filtered_tracked_rows(tracked_rows, stock_filter):
         row for row in tracked_rows
         if row.get('stock_status', 'unknown') == selected_status
     ]
+
+
+def get_filtered_tracked_rows_by_shopify(tracked_rows, shopify_filter, shopify_status_map):
+    """Filter tracked rows by Shopify presence/status (Active / Draft / Not on Shopify)."""
+    if not shopify_filter or shopify_filter == 'All':
+        return tracked_rows
+
+    shopify_status_map = shopify_status_map or {}
+    filtered = []
+    for row in tracked_rows:
+        row_key = row.get('markaz_url') or row.get('id')
+        snapshot = shopify_status_map.get(row_key, {}) or {}
+        on_shopify = bool(snapshot.get('on_shopify'))
+        status = (snapshot.get('status') or '').lower()
+
+        if shopify_filter == 'Not on Shopify':
+            if not on_shopify:
+                filtered.append(row)
+        elif shopify_filter == 'Active':
+            if on_shopify and status == 'active':
+                filtered.append(row)
+        elif shopify_filter == 'Draft':
+            if on_shopify and status == 'draft':
+                filtered.append(row)
+        elif shopify_filter == 'Archived':
+            if on_shopify and status == 'archived':
+                filtered.append(row)
+
+    return filtered
 
 
 def format_stock_status_label(stock_status):
@@ -523,6 +562,17 @@ def invalidate_shopify_status_cache():
     st.session_state.pop('shopify_status_map', None)
 
 
+def invalidate_tracked_rows_cache():
+    st.session_state.pop('tracked_rows_cache', None)
+
+
+def load_tracked_rows(force_refresh=False):
+    """Load tracked products once per session until mutated (cuts Supabase list spam)."""
+    if force_refresh or 'tracked_rows_cache' not in st.session_state:
+        st.session_state.tracked_rows_cache = list_tracked_products()
+    return st.session_state.tracked_rows_cache
+
+
 def load_shopify_status_map(tracked_rows, force_refresh=False):
     if not is_shopify_configured():
         return {}
@@ -573,12 +623,21 @@ SHOPIFY_ICON_PATH = Path(__file__).resolve().parent / 'assets' / 'shopify-icon.s
 
 
 def render_tracked_products_heading():
-    heading_col, icon_col = st.columns([0.94, 0.06], vertical_alignment="center")
+    heading_col, icon_col, refresh_col = st.columns([0.82, 0.06, 0.12], vertical_alignment="center")
     with heading_col:
         st.subheader("Tracked Products")
     with icon_col:
         if is_shopify_configured():
             render_shopify_tab_icon()
+    with refresh_col:
+        if st.button(
+            "Reload list",
+            key="reload_tracked_list",
+            help="Force refresh tracked products from Supabase (skips local cache).",
+        ):
+            invalidate_tracked_rows_cache()
+            invalidate_shopify_status_cache()
+            st.rerun()
 
 
 def apply_shopify_sync_results(results):
@@ -598,6 +657,8 @@ def apply_shopify_sync_results(results):
         else:
             failed_results.append(result)
 
+    if synced_count:
+        invalidate_tracked_rows_cache()
     return synced_count, failed_results
 
 
@@ -631,19 +692,19 @@ def apply_shopify_publish_results(results):
 
             markaz_url = result.get('markaz_url')
             if markaz_url and is_supabase_configured():
+                # One write instead of upsert + separate metadata update.
                 upsert_tracked_product(
                     markaz_url=markaz_url,
                     stock_status=result.get('stock_status', 'unknown'),
                     title=result.get('title'),
                     shopify_handle=result.get('shopify_handle'),
-                )
-                update_tracked_shopify_metadata(
-                    markaz_url,
                     shopify_product_id=result.get('shopify_product_id'),
-                    shopify_handle=result.get('shopify_handle'),
                 )
         else:
             failed_results.append(result)
+
+    if created_count or updated_count:
+        invalidate_tracked_rows_cache()
 
     return created_count, updated_count, failed_results, warning_results
 
@@ -783,7 +844,7 @@ def render_tracked_products_tab():
         return
 
     try:
-        tracked_rows = list_tracked_products()
+        tracked_rows = load_tracked_rows()
     except Exception as exc:
         st.error(f"Could not load tracked products from Supabase: {exc}")
         return
@@ -793,13 +854,26 @@ def render_tracked_products_tab():
         return
 
     stock_filter = st.radio(
-        "Filter by stock status",
+        "Filter by Markaz stock",
         options=["All", "In Stock", "Out of Stock", "Unknown"],
         horizontal=True,
         key="tracked_stock_filter",
     )
-    filtered_rows = get_filtered_tracked_rows(tracked_rows, stock_filter)
+    shopify_filter = st.radio(
+        "Filter by Shopify status",
+        options=["All", "Not on Shopify", "Active", "Draft", "Archived"],
+        horizontal=True,
+        key="tracked_shopify_filter",
+        help="Uses latest Shopify status snapshot. Click Refresh Shopify Status if list looks stale.",
+    )
+
     shopify_status_map = load_shopify_status_map(tracked_rows)
+    filtered_rows = get_filtered_tracked_rows(tracked_rows, stock_filter)
+    filtered_rows = get_filtered_tracked_rows_by_shopify(
+        filtered_rows,
+        shopify_filter,
+        shopify_status_map,
+    )
 
     auto_sync_shopify = st.checkbox(
         "Auto-sync to Shopify after Refresh All Status",
@@ -808,7 +882,7 @@ def render_tracked_products_tab():
         disabled=not is_shopify_configured(),
     )
 
-    refresh_col, shopify_refresh_col, send_col, sync_col, publish_col = st.columns(5)
+    refresh_col, shopify_refresh_col, send_col, sync_col, publish_col, delete_col = st.columns(6)
     with refresh_col:
         refresh_all = st.button("Refresh All Status", type="secondary", key="refresh_all_tracked")
     with shopify_refresh_col:
@@ -842,12 +916,114 @@ def render_tracked_products_tab():
             disabled=not is_shopify_configured(),
             help="Fetch from Markaz and create products directly on Shopify.",
         )
+    with delete_col:
+        delete_filtered = st.button(
+            "Delete Filtered",
+            type="secondary",
+            key="delete_filtered_tracked",
+            help="Delete currently filtered products from Supabase and Shopify.",
+        )
+
+    if delete_filtered:
+        if not filtered_rows:
+            st.warning("No products match the current Markaz/Shopify filters to delete.")
+            st.session_state.pop('bulk_delete_pending_rows', None)
+        else:
+            st.session_state.bulk_delete_pending_rows = [
+                {
+                    'id': row.get('id'),
+                    'markaz_url': row.get('markaz_url'),
+                    'title': row.get('title'),
+                    'shopify_handle': row.get('shopify_handle'),
+                    'shopify_product_id': row.get('shopify_product_id'),
+                }
+                for row in filtered_rows
+            ]
+
+    pending_delete_rows = st.session_state.get('bulk_delete_pending_rows') or []
+    if pending_delete_rows:
+        st.warning(
+            f"⚠️ Confirm permanent delete of **{len(pending_delete_rows)}** filtered product(s) "
+            "from **Supabase** and **Shopify** (if linked)."
+        )
+        confirm_col, cancel_col, _ = st.columns([1, 1, 4])
+        with confirm_col:
+            confirm_bulk_delete = st.button(
+                "Confirm Delete",
+                type="primary",
+                key="confirm_bulk_delete_tracked",
+            )
+        with cancel_col:
+            cancel_bulk_delete = st.button("Cancel", key="cancel_bulk_delete_tracked")
+
+        if cancel_bulk_delete:
+            st.session_state.pop('bulk_delete_pending_rows', None)
+            st.rerun()
+
+        if confirm_bulk_delete:
+            progress = st.progress(0.0, text="Deleting filtered products...")
+            status_container = st.empty()
+            removed_count = 0
+            shopify_deleted = 0
+            shopify_failed = []
+            urls_to_delete = []
+
+            for index, row in enumerate(pending_delete_rows):
+                title = row.get('title') or row.get('markaz_url') or 'Product'
+                status_container.caption(
+                    f"Deleting **{index + 1} of {len(pending_delete_rows)}**: {title[:60]}"
+                )
+                progress.progress(
+                    (index + 1) / len(pending_delete_rows),
+                    text=f"Delete {index + 1} of {len(pending_delete_rows)}",
+                )
+
+                if is_shopify_configured():
+                    shopify_result = delete_tracked_row_from_shopify(row)
+                    if shopify_result.get('success'):
+                        if not (
+                            shopify_result.get('skipped')
+                            or shopify_result.get('not_found')
+                        ):
+                            shopify_deleted += 1
+                    else:
+                        shopify_failed.append({
+                            'title': title,
+                            'error': shopify_result.get('error', 'Unknown error'),
+                        })
+
+                markaz_url = row.get('markaz_url')
+                if markaz_url:
+                    urls_to_delete.append(markaz_url)
+
+            if urls_to_delete:
+                delete_tracked_products(urls_to_delete)
+                removed_count = len(urls_to_delete)
+
+            progress.progress(1.0, text="Done.")
+            status_container.caption("Finished.")
+            st.session_state.pop('bulk_delete_pending_rows', None)
+            invalidate_tracked_rows_cache()
+            invalidate_shopify_status_cache()
+
+            st.success(
+                f"Deleted **{removed_count}** product(s) from tracked list. "
+                f"Shopify deleted: **{shopify_deleted}**."
+            )
+            for failed in shopify_failed:
+                st.warning(
+                    f"Removed from tracked list, but Shopify delete failed for "
+                    f"**{failed['title']}**: {failed['error']}"
+                )
+            st.rerun()
 
     if refresh_shopify_status:
-        load_shopify_status_map(tracked_rows, force_refresh=True)
+        load_tracked_rows(force_refresh=True)
+        load_shopify_status_map(load_tracked_rows(), force_refresh=True)
         st.rerun()
 
     if refresh_all:
+        tracked_rows = load_tracked_rows()
         progress = st.progress(0.0, text="Refreshing stock status...")
         for index, row in enumerate(tracked_rows):
             progress.progress((index + 1) / len(tracked_rows), text=f"Checking {index + 1} of {len(tracked_rows)}")
@@ -857,8 +1033,10 @@ def render_tracked_products_tab():
         progress.progress(1.0, text="Done.")
         st.success("Stock status refreshed for all tracked products.")
 
+        invalidate_tracked_rows_cache()
+        refreshed_rows = load_tracked_rows(force_refresh=True)
+
         if auto_sync_shopify and is_shopify_configured():
-            refreshed_rows = list_tracked_products()
             sync_results = sync_tracked_rows_to_shopify(refreshed_rows)
             synced_count, failed_results = apply_shopify_sync_results(sync_results)
             show_shopify_sync_summary(synced_count, failed_results)
@@ -870,7 +1048,7 @@ def render_tracked_products_tab():
         if not is_shopify_configured():
             st.warning("Shopify is not configured. Add credentials to `.streamlit/secrets.toml`.")
         elif not filtered_rows:
-            st.warning(f"No products with status **{stock_filter}** to sync.")
+            st.warning("No products match the current Markaz/Shopify filters to sync.")
         else:
             with st.spinner(f"Syncing {len(filtered_rows)} product(s) to Shopify..."):
                 sync_results = sync_tracked_rows_to_shopify(filtered_rows)
@@ -883,7 +1061,7 @@ def render_tracked_products_tab():
         if not is_shopify_configured():
             st.warning("Shopify is not configured. Add credentials to `.streamlit/secrets.toml`.")
         elif not filtered_rows:
-            st.warning(f"No products with status **{stock_filter}** to publish.")
+            st.warning("No products match the current Markaz/Shopify filters to publish.")
         else:
             progress = st.progress(0.0, text="Fetching from Markaz...")
             status_container = st.empty()
@@ -903,7 +1081,7 @@ def render_tracked_products_tab():
 
     if send_to_converter:
         if not filtered_rows:
-            st.warning(f"No products with status **{stock_filter}** to send.")
+            st.warning("No products match the current Markaz/Shopify filters to send.")
         else:
             progress = st.progress(0.0, text="Fetching products from Markaz...")
             status_container = st.empty()
@@ -916,8 +1094,14 @@ def render_tracked_products_tab():
                 st.session_state.products_list = products
                 st.session_state.processed_urls = processed_urls
                 st.session_state.fetched_product_data = None
+                filter_note_parts = []
+                if stock_filter != "All":
+                    filter_note_parts.append(f"Markaz: {stock_filter}")
+                if shopify_filter != "All":
+                    filter_note_parts.append(f"Shopify: {shopify_filter}")
+                filter_note = " · ".join(filter_note_parts) if filter_note_parts else "All"
                 st.session_state.converter_import_message = (
-                    f"Loaded **{len(products)}** product(s) with filter **{stock_filter}**. "
+                    f"Loaded **{len(products)}** product(s) with filter **{filter_note}**. "
                     "Open the **Shopify Converter** tab to review and download CSV."
                 )
                 st.success(st.session_state.converter_import_message)
@@ -930,18 +1114,74 @@ def render_tracked_products_tab():
             if products:
                 st.rerun()
 
-    if stock_filter == "All":
+    filter_parts = []
+    if stock_filter != "All":
+        filter_parts.append(f"Markaz: {stock_filter}")
+    if shopify_filter != "All":
+        filter_parts.append(f"Shopify: {shopify_filter}")
+    filter_label = " · ".join(filter_parts) if filter_parts else "All"
+
+    if not filter_parts:
         st.markdown(f"**{len(tracked_rows)}** saved URL(s)")
     else:
-        st.markdown(f"**{len(filtered_rows)}** shown of **{len(tracked_rows)}** saved URL(s)")
+        st.markdown(
+            f"**{len(filtered_rows)}** matching of **{len(tracked_rows)}** "
+            f"({filter_label})"
+        )
 
     render_shopify_status_summary(tracked_rows, shopify_status_map)
 
     if not filtered_rows:
-        st.info(f"No products with status **{stock_filter}**.")
+        st.info(f"No products match filter **{filter_label}**.")
         return
 
-    for row in filtered_rows:
+    # Pagination: 50 rows per page (list view only — bulk actions still use full filtered set)
+    TRACKED_PAGE_SIZE = 50
+    filter_signature = f"{stock_filter}|{shopify_filter}|{len(filtered_rows)}"
+    if st.session_state.get('tracked_page_filter_sig') != filter_signature:
+        st.session_state.tracked_page_filter_sig = filter_signature
+        st.session_state.tracked_list_page = 1
+
+    total_filtered = len(filtered_rows)
+    total_pages = max(1, (total_filtered + TRACKED_PAGE_SIZE - 1) // TRACKED_PAGE_SIZE)
+    current_page = int(st.session_state.get('tracked_list_page', 1) or 1)
+    current_page = min(max(1, current_page), total_pages)
+    st.session_state.tracked_list_page = current_page
+
+    start_idx = (current_page - 1) * TRACKED_PAGE_SIZE
+    end_idx = min(start_idx + TRACKED_PAGE_SIZE, total_filtered)
+    page_rows = filtered_rows[start_idx:end_idx]
+
+    nav_prev, nav_info, nav_next = st.columns([1, 3, 1])
+    with nav_prev:
+        if st.button(
+            "← Prev",
+            key="tracked_page_prev",
+            disabled=current_page <= 1,
+            width='stretch',
+        ):
+            st.session_state.tracked_list_page = current_page - 1
+            st.rerun()
+    with nav_info:
+        st.markdown(
+            f"<div style='text-align:center; padding-top:0.4rem;'>"
+            f"Page <strong>{current_page}</strong> of <strong>{total_pages}</strong>"
+            f" · showing <strong>{start_idx + 1}–{end_idx}</strong> of <strong>{total_filtered}</strong>"
+            f" · {TRACKED_PAGE_SIZE}/page"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    with nav_next:
+        if st.button(
+            "Next →",
+            key="tracked_page_next",
+            disabled=current_page >= total_pages,
+            width='stretch',
+        ):
+            st.session_state.tracked_list_page = current_page + 1
+            st.rerun()
+
+    for row in page_rows:
         title = row.get('title') or 'Untitled product'
         stock_status = row.get('stock_status', 'unknown')
         row_key = row.get('markaz_url') or row.get('id')
@@ -1050,6 +1290,7 @@ def render_tracked_products_tab():
                             shopify_delete_result = delete_tracked_row_from_shopify(row)
 
                     delete_tracked_product(row['markaz_url'])
+                    invalidate_tracked_rows_cache()
                     invalidate_shopify_status_cache()
 
                     if shopify_delete_result and shopify_delete_result.get('success'):
@@ -1068,6 +1309,120 @@ def render_tracked_products_tab():
                     else:
                         st.success("Removed from tracked list.")
                     st.rerun()
+
+    if total_pages > 1:
+        st.divider()
+        bot_prev, bot_info, bot_next = st.columns([1, 3, 1])
+        with bot_prev:
+            if st.button(
+                "← Prev",
+                key="tracked_page_prev_bottom",
+                disabled=current_page <= 1,
+                width='stretch',
+            ):
+                st.session_state.tracked_list_page = current_page - 1
+                st.rerun()
+        with bot_info:
+            st.markdown(
+                f"<div style='text-align:center; padding-top:0.4rem;'>"
+                f"Page <strong>{current_page}</strong> / <strong>{total_pages}</strong>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        with bot_next:
+            if st.button(
+                "Next →",
+                key="tracked_page_next_bottom",
+                disabled=current_page >= total_pages,
+                width='stretch',
+            ):
+                st.session_state.tracked_list_page = current_page + 1
+                st.rerun()
+
+
+def scrape_and_add_links_to_list(links, progress_bar=None, status_container=None):
+    """Scrape product URLs and append successful results to products_list. Returns added count."""
+    total = len(links)
+    added_count = 0
+    if total == 0:
+        return 0
+
+    def _update(i, label):
+        if status_container is not None:
+            status_container.caption(label)
+        if progress_bar is not None:
+            progress_bar.progress((i + 1) / total, text=f"Link {i + 1} of {total}")
+
+    if _IS_DEMO:
+        for i, link in enumerate(links):
+            _update(i, f"**Link {i + 1} of {total}** — fetching (demo)...")
+            if link in st.session_state.processed_urls:
+                st.warning(f"⚠️ Skipped (already added): {link[:60]}...")
+                continue
+            try:
+                new_product_data = scrape_markaz_product(link)
+                if new_product_data.get("status") == "success":
+                    apply_default_pricing_rules(new_product_data)
+                    st.session_state.products_list.append(new_product_data)
+                    st.session_state.processed_urls.add(link)
+                    saved_ok, saved_error = save_product_to_supabase(new_product_data)
+                    if not saved_ok:
+                        st.warning(f"Supabase save failed for {link[:60]}... — {saved_error}")
+                    added_count += 1
+                else:
+                    st.warning(
+                        f"⚠️ Skipped (failed): {link[:60]}... — "
+                        f"{new_product_data.get('status', 'Unknown error')}"
+                    )
+            except Exception as e:
+                st.warning(f"⚠️ Skipped (error): {link[:60]}... — {str(e)}")
+        return added_count
+
+    with sync_playwright() as p:
+        browser = launch_browser_for_serverless(p)
+        for i, link in enumerate(links):
+            _update(i, f"**Link {i + 1} of {total}** — fetching...")
+            if link in st.session_state.processed_urls:
+                st.warning(f"⚠️ Skipped (already added): {link[:60]}...")
+                continue
+            context = None
+            try:
+                context = browser.new_context(
+                    permissions=[],
+                    ignore_https_errors=True,
+                    viewport={'width': 1920, 'height': 1080},
+                )
+                page = context.new_page()
+                new_product_data = scrape_product_from_page(page, link)
+                if new_product_data.get("status") == "success":
+                    apply_default_pricing_rules(new_product_data)
+                    st.session_state.products_list.append(new_product_data)
+                    st.session_state.processed_urls.add(link)
+                    saved_ok, saved_error = save_product_to_supabase(new_product_data)
+                    if not saved_ok:
+                        st.warning(f"Supabase save failed for {link[:60]}... — {saved_error}")
+                    added_count += 1
+                else:
+                    st.warning(
+                        f"⚠️ Skipped (failed): {link[:60]}... — "
+                        f"{new_product_data.get('status', 'Unknown error')}"
+                    )
+            except Exception as e:
+                st.warning(f"⚠️ Skipped (error): {link[:60]}... — {str(e)}")
+            finally:
+                if context:
+                    try:
+                        context.close()
+                    except Exception:
+                        pass
+            if i < total - 1:
+                time.sleep(1)
+        try:
+            browser.close()
+        except Exception:
+            pass
+
+    return added_count
 
 
 def render_converter_tab():
@@ -1092,47 +1447,93 @@ def render_converter_tab():
     </style>
     """, unsafe_allow_html=True)
     
-    # Pehle 2 col = title, 3rd col = Single, 4th col = Multiple, baaki merge/empty — sab left pe pass pass
-    c_title, c_single, c_multi, c_empty = st.columns([2, 1, 1, 6])
+    # Title + mode buttons: Single | Multiple | Category
+    c_title, c_single, c_multi, c_category, c_empty = st.columns([2, 1, 1, 1, 5])
     with c_title:
         st.subheader("Add Products")
     with c_single:
         btn_single = st.button("Single", key="mode_single", help="Fetch one product at a time")
     with c_multi:
         btn_multi = st.button("Multiple", key="mode_multiple", help="Fetch multiple products (paste many URLs)")
+    with c_category:
+        btn_category = st.button(
+            "Category",
+            key="mode_category",
+            help="Paste a Markaz category page and fetch product cards page-by-page",
+        )
     with c_empty:
-        pass  # baaki empty — text aur buttons left side pe hi
+        pass
     if btn_single:
         st.session_state.add_mode = "single"
         st.rerun()
     if btn_multi:
         st.session_state.add_mode = "multiple"
         st.rerun()
-    # Show current mode hint
-    if st.session_state.add_mode == "single":
-        st.caption("Single product mode — enter one URL below.")
+    if btn_category:
+        st.session_state.add_mode = "category"
+        st.rerun()
+
+    add_mode = st.session_state.add_mode
+    if add_mode == "single":
+        st.caption("Single product mode — enter one product URL below.")
+    elif add_mode == "category":
+        st.caption(
+            "Category mode — paste a Markaz category/shop page URL. "
+            "Product card URLs are collected page-by-page (`?page=1`, `?page=2`, …), then scraped."
+        )
     else:
-        st.caption("Multiple products mode — paste one URL per line below.")
+        st.caption("Multiple products mode — paste one product URL per line below.")
+
     # Initialize URL input counter for unique keys
     if 'url_input_counter' not in st.session_state:
         st.session_state.url_input_counter = 0
-    # Input: single line (Single mode) or text area (Multiple mode)
-    if st.session_state.add_mode == "single":
+
+    category_start_page = 1
+    category_end_page = 1
+    if add_mode == "single":
         url_input = st.text_input(
             "Product URL",
             placeholder="https://www.markaz.app/shop/product/...",
-            key=f"product_url_input_{st.session_state.url_input_counter}"
+            key=f"product_url_input_{st.session_state.url_input_counter}",
         )
+    elif add_mode == "category":
+        url_input = st.text_input(
+            "Category / Shop Page URL",
+            placeholder=(
+                "https://www.markaz.app/shop/.../3%20Piece%20Suits"
+                "  or  ...?page=2"
+            ),
+            key=f"product_url_input_{st.session_state.url_input_counter}",
+        )
+        page_col1, page_col2, _ = st.columns([1, 1, 3])
+        with page_col1:
+            category_start_page = st.number_input(
+                "From page",
+                min_value=1,
+                value=1,
+                step=1,
+                key="category_start_page",
+                help="Markaz uses ?page=N on category pages.",
+            )
+        with page_col2:
+            category_end_page = st.number_input(
+                "To page",
+                min_value=1,
+                value=1,
+                step=1,
+                key="category_end_page",
+                help="Inclusive. Example: 1→2 fetches page=1 and page=2.",
+            )
     else:
         url_input = st.text_area(
             "Paste Multiple Product URLs (One per line)",
             placeholder="https://www.markaz.app/shop/product/...\nhttps://www.markaz.app/shop/product/...",
             key=f"product_url_input_{st.session_state.url_input_counter}",
-            height=120
+            height=120,
         )
     
     # Add Enter key listener to trigger Add to List button (for single-line paste)
-    if not _IS_DEMO:
+    if not _IS_DEMO and add_mode == "single":
         st.markdown("""
     <script>
     (function() {
@@ -1181,18 +1582,29 @@ def render_converter_tab():
     </script>
     """, unsafe_allow_html=True)
     
-    # Buttons: Single mode = Add to List + Fetch Product Data; Multiple mode = sirf Add to List
-    if st.session_state.add_mode == "single":
+    # Buttons by mode
+    if add_mode == "single":
         col1, col2 = st.columns(2)
         with col1:
             quick_add_button = st.button("✅ Add to List", type="primary", width='stretch', key="quick_add_button")
         with col2:
             fetch_button = st.button("📥 Fetch Product Data", type="secondary", width='stretch')
+        category_fetch_button = False
+    elif add_mode == "category":
+        category_fetch_button = st.button(
+            "📥 Fetch Category & Add to List",
+            type="primary",
+            width='stretch',
+            key="category_fetch_button",
+        )
+        quick_add_button = False
+        fetch_button = False
     else:
         quick_add_button = st.button("✅ Add to List", type="primary", width='stretch', key="quick_add_button")
         fetch_button = False
+        category_fetch_button = False
 
-    if fetch_button and url_input and st.session_state.add_mode == "single":
+    if fetch_button and url_input and add_mode == "single":
         # Single mode: fetch one URL and show preview (changes list me ja kr karein)
         with st.spinner("Fetching product data..."):
             product_data = scrape_markaz_product(url_input.strip())
@@ -1205,8 +1617,59 @@ def render_converter_tab():
         else:
             st.error(f"Failed to fetch: {product_data.get('status', 'Unknown error')}")
 
+    if category_fetch_button:
+        category_url = (url_input or "").strip()
+        if not category_url:
+            st.warning("Please paste a Markaz category / shop page URL.")
+        elif int(category_end_page) < int(category_start_page):
+            st.warning("To page must be greater than or equal to From page.")
+        else:
+            progress_bar = st.progress(0.0, text="Collecting product URLs from category pages...")
+            status_container = st.empty()
+            status_container.caption(
+                f"Scanning category pages **{int(category_start_page)}**–**{int(category_end_page)}**..."
+            )
+            with st.spinner("Reading product cards from Markaz category page(s)..."):
+                discovery = scrape_category_product_urls(
+                    category_url,
+                    start_page=int(category_start_page),
+                    end_page=int(category_end_page),
+                )
+
+            if discovery.get("status") != "success":
+                progress_bar.progress(1.0, text="Done.")
+                st.error(discovery.get("status", "Failed to read category page"))
+                for err in discovery.get("errors") or []:
+                    st.warning(err)
+            else:
+                links = discovery.get("urls") or []
+                for page_info in discovery.get("pages") or []:
+                    st.caption(
+                        f"Page {page_info.get('page')}: "
+                        f"{page_info.get('count', 0)} link(s) found "
+                        f"({page_info.get('unique_new', 0)} new)"
+                    )
+                st.info(f"Found **{len(links)}** unique product URL(s). Scraping products now...")
+                status_container.caption(f"Scraping **{len(links)}** product(s)...")
+                added_count = scrape_and_add_links_to_list(
+                    links,
+                    progress_bar=progress_bar,
+                    status_container=status_container,
+                )
+                progress_bar.progress(1.0, text="Done.")
+                status_container.caption("Finished.")
+                st.success(
+                    f"✅ Category fetch complete. Added **{added_count}** product(s) "
+                    f"(from **{len(links)}** URL(s) on pages "
+                    f"{int(category_start_page)}–{int(category_end_page)})."
+                )
+                if added_count < len(links):
+                    st.info(f"{len(links) - added_count} URL(s) were skipped (duplicates or errors).")
+                st.session_state.url_input_counter += 1
+                st.rerun()
+
     if quick_add_button:
-        if st.session_state.add_mode == "multiple":
+        if add_mode == "multiple":
             # Multiple mode: sirf Add to List — bulk fetch aur sab list me add
             links = [l.strip() for l in (url_input or "").split('\n') if l.strip()]
             if not links:
@@ -1215,90 +1678,18 @@ def render_converter_tab():
                 total = len(links)
                 progress_bar = st.progress(0.0, text="Starting...")
                 status_container = st.empty()
-                added_count = 0
-                if _IS_DEMO:
-                    for i, link in enumerate(links):
-                        status_container.caption(f"**Link {i + 1} of {total}** — fetching (demo)...")
-                        progress_bar.progress((i + 1) / total, text=f"Link {i + 1} of {total}")
-                        if link in st.session_state.processed_urls:
-                            st.warning(f"⚠️ Skipped (already added): {link[:60]}...")
-                            continue
-                        try:
-                            new_product_data = scrape_markaz_product(link)
-                            if new_product_data.get("status") == "success":
-                                fetched_price = float(new_product_data.get("price", 0))
-                                default_variant_adjustment, default_compare_at_adjustment = (
-                                    get_default_price_adjustments(fetched_price)
-                                )
-                                new_product_data["variant_price_adjustment"] = default_variant_adjustment
-                                new_product_data["compare_at_price_adjustment"] = default_compare_at_adjustment
-                                st.session_state.products_list.append(new_product_data)
-                                st.session_state.processed_urls.add(link)
-                                saved_ok, saved_error = save_product_to_supabase(new_product_data)
-                                if not saved_ok:
-                                    st.warning(f"Supabase save failed for {link[:60]}... — {saved_error}")
-                                added_count += 1
-                            else:
-                                st.warning(
-                                    f"⚠️ Skipped (failed): {link[:60]}... — "
-                                    f"{new_product_data.get('status', 'Unknown error')}"
-                                )
-                        except Exception as e:
-                            st.warning(f"⚠️ Skipped (error): {link[:60]}... — {str(e)}")
-                else:
-                    with sync_playwright() as p:
-                        browser = launch_browser_for_serverless(p)
-                        for i, link in enumerate(links):
-                            status_container.caption(f"**Link {i + 1} of {total}** — fetching...")
-                            progress_bar.progress((i + 1) / total, text=f"Link {i + 1} of {total}")
-                            if link in st.session_state.processed_urls:
-                                st.warning(f"⚠️ Skipped (already added): {link[:60]}...")
-                                continue
-                            context = None
-                            try:
-                                context = browser.new_context(
-                                    permissions=[],
-                                    ignore_https_errors=True,
-                                    viewport={'width': 1920, 'height': 1080}
-                                )
-                                page = context.new_page()
-                                new_product_data = scrape_product_from_page(page, link)
-                                if new_product_data.get("status") == "success":
-                                    fetched_price = float(new_product_data.get("price", 0))
-                                    default_variant_adjustment, default_compare_at_adjustment = (
-                                        get_default_price_adjustments(fetched_price)
-                                    )
-                                    new_product_data["variant_price_adjustment"] = default_variant_adjustment
-                                    new_product_data["compare_at_price_adjustment"] = default_compare_at_adjustment
-                                    st.session_state.products_list.append(new_product_data)
-                                    st.session_state.processed_urls.add(link)
-                                    saved_ok, saved_error = save_product_to_supabase(new_product_data)
-                                    if not saved_ok:
-                                        st.warning(f"Supabase save failed for {link[:60]}... — {saved_error}")
-                                    added_count += 1
-                                else:
-                                    st.warning(f"⚠️ Skipped (failed): {link[:60]}... — {new_product_data.get('status', 'Unknown error')}")
-                            except Exception as e:
-                                st.warning(f"⚠️ Skipped (error): {link[:60]}... — {str(e)}")
-                            finally:
-                                if context:
-                                    try:
-                                        context.close()
-                                    except Exception:
-                                        pass
-                            if i < total - 1:
-                                time.sleep(1)
-                        try:
-                            browser.close()
-                        except Exception:
-                            pass
+                added_count = scrape_and_add_links_to_list(
+                    links,
+                    progress_bar=progress_bar,
+                    status_container=status_container,
+                )
                 progress_bar.progress(1.0, text="Done.")
                 status_container.caption("Finished.")
                 st.success(f"✅ **Bulk fetch complete.** Added **{added_count}** product(s) to the list (of {total} URL(s) processed).")
                 if added_count < total:
                     st.info(f"{total - added_count} URL(s) were skipped (duplicates or errors).")
                 st.rerun()
-        else:
+        elif add_mode == "single":
             # Single mode: first URL add to list
             first_url = (url_input or "").strip().split('\n')[0].strip() if url_input else ""
             if first_url:
@@ -1636,12 +2027,19 @@ def main():
 
     render_shopify_publish_feedback()
 
-    converter_tab, tracked_tab = st.tabs(["Shopify Converter", "Tracked Products"])
+    # Radio instead of st.tabs: Streamlit runs EVERY tab body on each rerun,
+    # which was flooding Supabase list_tracked_products on Converter clicks.
+    selected_section = st.radio(
+        "Section",
+        options=["Shopify Converter", "Tracked Products"],
+        horizontal=True,
+        key="main_section",
+        label_visibility="collapsed",
+    )
 
-    with converter_tab:
+    if selected_section == "Shopify Converter":
         render_converter_tab()
-
-    with tracked_tab:
+    else:
         render_tracked_products_tab()
 
 

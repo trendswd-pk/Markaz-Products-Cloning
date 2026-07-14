@@ -15,6 +15,7 @@ def activate_demo_mode():
 
     markaz_scraper.scrape_markaz_product = demo_scrape.scrape_markaz_product_demo
     markaz_scraper.scrape_product_from_page = demo_scrape.scrape_product_from_page_demo
+    markaz_scraper.scrape_category_product_urls = demo_scrape.scrape_category_product_urls_demo
 
     supabase_config.is_supabase_configured = lambda: True
 
@@ -50,6 +51,7 @@ def rebind_app_module():
 
     app_module.scrape_markaz_product = demo_scrape.scrape_markaz_product_demo
     app_module.scrape_product_from_page = demo_scrape.scrape_product_from_page_demo
+    app_module.scrape_category_product_urls = demo_scrape.scrape_category_product_urls_demo
     app_module.publish_products_to_shopify = demo_shopify.publish_products_to_shopify
     app_module.sync_tracked_rows_to_shopify = demo_shopify.sync_tracked_rows_to_shopify
     app_module.fetch_shopify_status_map = demo_shopify.fetch_shopify_status_map

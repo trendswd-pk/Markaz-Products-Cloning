@@ -86,3 +86,41 @@ def scrape_markaz_product_demo(url):
 def scrape_product_from_page_demo(page, url):
     """Drop-in replacement for bulk fetch loops in demo mode."""
     return scrape_markaz_product_demo(url)
+
+
+def scrape_category_product_urls_demo(category_url, start_page=1, end_page=1):
+    """Simulate category page product URL discovery for demo mode."""
+    start_page = max(1, int(start_page or 1))
+    end_page = max(start_page, int(end_page or start_page))
+    category_url = (category_url or '').strip()
+    if not category_url:
+        return {
+            'status': 'Error: Category URL is empty',
+            'urls': [],
+            'pages': [],
+            'errors': ['Category URL is empty'],
+        }
+
+    slug = urlparse(category_url).path.strip('/').replace('/', '-') or 'category'
+    slug = re.sub(r'[^a-zA-Z0-9-]', '', slug)[:40] or 'category'
+    urls = []
+    pages = []
+    for page_number in range(start_page, end_page + 1):
+        page_urls = [
+            f'https://www.markaz.app/shop/product/demo-{slug}-item-{page_number}-{i}/90000{page_number}{i}'
+            for i in range(1, 4)
+        ]
+        urls.extend(page_urls)
+        pages.append({
+            'page': page_number,
+            'url': category_url,
+            'count': len(page_urls),
+            'unique_new': len(page_urls),
+        })
+
+    return {
+        'status': 'success',
+        'urls': urls,
+        'pages': pages,
+        'errors': [],
+    }

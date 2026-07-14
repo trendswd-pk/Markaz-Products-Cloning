@@ -1,7 +1,7 @@
 import json
 import os
 import re
-from urllib.parse import urljoin
+from urllib.parse import parse_qs, urlencode, urljoin, urlparse, urlunparse
 
 SIZE_PATTERN = re.compile(
     r'^(X-?Small|Small|Medium|Large|X-?Large|XX-?Large|XXX-?Large|\d+XL?|One Size|Free Size)$',
@@ -433,3 +433,266 @@ def scrape_markaz_product(url):
                 browser.close()
             except Exception:
                 pass
+
+
+def normalize_product_url(href, base_url='https://www.markaz.app'):
+    """Turn relative/absolute product href into a clean absolute product URL."""
+    if not href:
+        return ''
+    absolute = urljoin(base_url, href.strip())
+    parsed = urlparse(absolute)
+    if '/shop/product/' not in parsed.path:
+        return ''
+    path = parsed.path.rstrip('/')
+    host = parsed.netloc or 'www.markaz.app'
+    scheme = parsed.scheme or 'https'
+    return f'{scheme}://{host}{path}'
+
+
+def build_category_page_url(category_url, page_number):
+    """Build category URL with ?page=N (Markaz pagination)."""
+    parsed = urlparse((category_url or '').strip())
+    if not parsed.scheme:
+        parsed = urlparse(urljoin('https://www.markaz.app/', category_url.strip()))
+
+    query = parse_qs(parsed.query, keep_blank_values=True)
+    query['page'] = [str(int(page_number))]
+    flat_query = {key: values[-1] for key, values in query.items()}
+    return urlunparse((
+        parsed.scheme or 'https',
+        parsed.netloc or 'www.markaz.app',
+        parsed.path,
+        parsed.params,
+        urlencode(flat_query),
+        '',
+    ))
+
+
+def extract_product_urls_from_category_page(page, base_url='https://www.markaz.app'):
+    """Collect unique product card URLs from an open Markaz category page.
+
+    Markaz lazily mounts cards as you scroll, so we scroll until the link
+    count stabilizes and also harvest any /shop/product/ paths from HTML/JSON.
+    """
+    try:
+        page.wait_for_selector('a[href*="/shop/product/"]', timeout=20000)
+    except Exception:
+        page.wait_for_timeout(3000)
+
+    # Scroll to bottom repeatedly until product-link count stops growing.
+    try:
+        page.evaluate(
+            """async () => {
+                const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+                let last = 0;
+                let stableRounds = 0;
+                for (let i = 0; i < 40; i++) {
+                    window.scrollBy(0, Math.floor(window.innerHeight * 0.85));
+                    await sleep(450);
+                    if ((i + 1) % 3 === 0) {
+                        window.scrollTo(0, document.body.scrollHeight);
+                        await sleep(700);
+                    }
+                    const n = document.querySelectorAll('a[href*="/shop/product/"]').length;
+                    if (n <= last) {
+                        stableRounds += 1;
+                        if (stableRounds >= 4) break;
+                    } else {
+                        stableRounds = 0;
+                        last = n;
+                    }
+                }
+                window.scrollTo(0, 0);
+                await sleep(400);
+            }"""
+        )
+        page.wait_for_timeout(1000)
+    except Exception:
+        pass
+
+    hrefs = page.eval_on_selector_all(
+        'a[href*="/shop/product/"]',
+        'els => els.map(el => el.getAttribute("href"))',
+    ) or []
+
+    # Fallback: scrape raw HTML / embedded Next.js payloads for any missed cards.
+    html_candidates = []
+    try:
+        html = page.content() or ''
+        html_candidates.extend(
+            re.findall(r'(?:https?://[^"\'\s]*?)?/shop/product/[^"\'\s<>\\]+', html, re.I)
+        )
+    except Exception:
+        pass
+
+    try:
+        extra = page.evaluate(
+            """() => {
+                const found = [];
+                const pushMatches = (text) => {
+                    if (!text) return;
+                    const re = /\\/shop\\/product\\/[\\w\\-./%]+/g;
+                    const matches = text.match(re) || [];
+                    for (const m of matches) found.push(m);
+                };
+                pushMatches(document.documentElement.innerHTML);
+                const next = document.getElementById('__NEXT_DATA__');
+                if (next) pushMatches(next.textContent || '');
+                for (const script of document.querySelectorAll('script')) {
+                    const type = (script.type || '').toLowerCase();
+                    if (type.includes('json') || script.id === '__NEXT_DATA__') {
+                        pushMatches(script.textContent || '');
+                    }
+                }
+                return found;
+            }"""
+        ) or []
+        html_candidates.extend(extra)
+    except Exception:
+        pass
+
+    urls = []
+    seen = set()
+    seen_ids = set()
+
+    def _add(href):
+        product_url = normalize_product_url(href, base_url=base_url)
+        if not product_url or product_url in seen:
+            return
+        # Prefer uniqueness by numeric product id when present
+        # (.../slug/728144) so duplicate slug variants don't inflate/miss lists.
+        path = urlparse(product_url).path.rstrip('/')
+        tail = path.rsplit('/', 1)[-1]
+        if tail.isdigit():
+            if tail in seen_ids:
+                return
+            seen_ids.add(tail)
+        seen.add(product_url)
+        urls.append(product_url)
+
+    for href in hrefs:
+        _add(href)
+    for href in html_candidates:
+        cleaned = href.replace('\\u002F', '/').replace('\\/', '/').rstrip('.,);]')
+        _add(cleaned)
+
+    return urls
+
+
+def scrape_category_product_urls(category_url, start_page=1, end_page=1):
+    """
+    Open Markaz category page(s) and return all product URLs found in cards.
+
+    Uses ?page=N pagination. Returns:
+    {
+      'status': 'success' | 'error: ...',
+      'urls': [...],
+      'pages': [{'page': 1, 'url': '...', 'count': N}, ...],
+      'errors': [...],
+    }
+    """
+    from playwright.sync_api import sync_playwright
+
+    start_page = max(1, int(start_page or 1))
+    end_page = max(start_page, int(end_page or start_page))
+    category_url = (category_url or '').strip()
+    if not category_url:
+        return {
+            'status': 'Error: Category URL is empty',
+            'urls': [],
+            'pages': [],
+            'errors': ['Category URL is empty'],
+        }
+
+    all_urls = []
+    seen = set()
+    seen_ids = set()
+    page_summaries = []
+    errors = []
+    browser = None
+
+    def _product_id(product_url):
+        tail = urlparse(product_url).path.rstrip('/').rsplit('/', 1)[-1]
+        return tail if tail.isdigit() else ''
+
+    try:
+        with sync_playwright() as playwright:
+            browser = launch_browser_for_serverless(playwright)
+            for page_number in range(start_page, end_page + 1):
+                context = None
+                page_url = build_category_page_url(category_url, page_number)
+                try:
+                    context = browser.new_context(
+                        permissions=[],
+                        ignore_https_errors=True,
+                        viewport={'width': 1920, 'height': 1080},
+                    )
+                    page = context.new_page()
+                    page.goto(page_url, wait_until='domcontentloaded', timeout=60000)
+                    try:
+                        page.wait_for_load_state('networkidle', timeout=15000)
+                    except Exception:
+                        pass
+                    page.wait_for_timeout(2500)
+                    found = extract_product_urls_from_category_page(page)
+                    new_on_page = 0
+                    for product_url in found:
+                        pid = _product_id(product_url)
+                        if product_url in seen or (pid and pid in seen_ids):
+                            continue
+                        seen.add(product_url)
+                        if pid:
+                            seen_ids.add(pid)
+                        all_urls.append(product_url)
+                        new_on_page += 1
+                    page_summaries.append({
+                        'page': page_number,
+                        'url': page_url,
+                        'count': len(found),
+                        'unique_new': new_on_page,
+                    })
+                    if not found:
+                        errors.append(f'Page {page_number}: no product URLs found')
+                except Exception as exc:
+                    errors.append(f'Page {page_number}: {exc}')
+                    page_summaries.append({
+                        'page': page_number,
+                        'url': page_url,
+                        'count': 0,
+                        'unique_new': 0,
+                        'error': str(exc),
+                    })
+                finally:
+                    if context:
+                        try:
+                            context.close()
+                        except Exception:
+                            pass
+    except Exception as exc:
+        return {
+            'status': f'Error: {exc}',
+            'urls': all_urls,
+            'pages': page_summaries,
+            'errors': errors + [str(exc)],
+        }
+    finally:
+        if browser:
+            try:
+                browser.close()
+            except Exception:
+                pass
+
+    if not all_urls:
+        return {
+            'status': 'Error: No product URLs found on selected page(s)',
+            'urls': [],
+            'pages': page_summaries,
+            'errors': errors,
+        }
+
+    return {
+        'status': 'success',
+        'urls': all_urls,
+        'pages': page_summaries,
+        'errors': errors,
+    }
