@@ -7,7 +7,7 @@ from pricing_rules import COMPARE_AT_EXTRA, get_default_price_adjustments
 from shopify_config import is_shopify_configured
 from shopify_sync import DEFAULT_IN_STOCK_QTY, ShopifyAPIError, get_shopify_client
 
-VENDOR_NAME = 'Markaz'
+VENDOR_NAME = 'at One Spot'
 
 
 def _block_demo_shopify_api(action='publish to Shopify'):

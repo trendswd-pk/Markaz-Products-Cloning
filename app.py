@@ -276,7 +276,7 @@ def create_shopify_row(product, variant_value="", image_url="", image_position="
         'Handle': handle,
         'Title': title,
         'Body (HTML)': body_html,
-        'Vendor': 'Markaz' if is_first_variant else '',
+        'Vendor': 'at One Spot' if is_first_variant else '',
         'Standard Product Type': standard_product_type if is_first_variant else '',
         'Custom Product Type': '',
         'Tags': tags if is_first_variant else '',
