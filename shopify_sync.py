@@ -6,6 +6,8 @@ from shopify_auth import get_shopify_access_token
 from shopify_config import DEFAULT_API_VERSION, get_shopify_credentials, is_shopify_configured
 
 DEFAULT_IN_STOCK_QTY = 50
+# Product create/update with images often exceeds 30s while Shopify fetches remote URLs.
+DEFAULT_REQUEST_TIMEOUT = (15, 120)
 
 
 def _block_demo_shopify_api(action='access Shopify'):
@@ -38,12 +40,12 @@ class ShopifyClient:
         })
         self._location_id = None
 
-    def _request(self, method, path, **kwargs):
+    def _request(self, method, path, timeout=None, **kwargs):
         _block_demo_shopify_api(f'call Shopify API ({method} {path})')
         response = self.session.request(
             method,
             f'{self.base_url}/{path}',
-            timeout=30,
+            timeout=timeout if timeout is not None else DEFAULT_REQUEST_TIMEOUT,
             **kwargs,
         )
         if not response.ok:

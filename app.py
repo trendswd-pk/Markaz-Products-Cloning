@@ -689,6 +689,10 @@ def apply_shopify_publish_results(results):
 
             if result.get('stock_sync_warning'):
                 warning_results.append(result)
+            elif result.get('timeout_recovered') or result.get('image_sync_errors') or result.get('message'):
+                # Soft notices (timeout recovery / partial image upload) — show as warnings.
+                if result.get('timeout_recovered') or result.get('image_sync_errors'):
+                    warning_results.append(result)
 
             markaz_url = result.get('markaz_url')
             if markaz_url and is_supabase_configured():
@@ -771,10 +775,23 @@ def show_shopify_publish_summary(created_count, updated_count, failed_results, w
         label = result.get('title') or result.get('shopify_handle') or result.get('markaz_url', 'Product')
         images_added = result.get('images_added', 0)
         images_note = f" **Images added:** {images_added}." if images_added else ''
-        st.warning(
-            f"**{label}** published, but stock/inventory was not synced.{images_note}\n\n"
-            f"{format_shopify_error_message(result.get('stock_sync_warning'))}"
-        )
+        if result.get('stock_sync_warning'):
+            st.warning(
+                f"**{label}** published, but stock/inventory was not synced.{images_note}\n\n"
+                f"{format_shopify_error_message(result.get('stock_sync_warning'))}"
+            )
+        elif result.get('timeout_recovered'):
+            st.warning(
+                f"**{label}** is on Shopify (create/update response timed out, then recovered)."
+                f"{images_note}\n\n{result.get('message', '')}"
+            )
+        elif result.get('image_sync_errors'):
+            st.warning(
+                f"**{label}** published, but some images failed.{images_note}\n\n"
+                f"{result.get('message') or '; '.join(result.get('image_sync_errors') or [])}"
+            )
+        elif result.get('message'):
+            st.info(f"**{label}:** {result.get('message')}")
 
     for result in failed_results:
         label = result.get('title') or result.get('shopify_handle') or result.get('markaz_url', 'Product')

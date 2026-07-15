@@ -2,6 +2,8 @@ import os
 import re
 from html import escape
 
+from requests.exceptions import RequestException, Timeout
+
 from markaz_scraper import normalize_markaz_image_url
 from pricing_rules import COMPARE_AT_EXTRA, get_default_price_adjustments
 from shopify_config import is_shopify_configured
@@ -108,6 +110,8 @@ def sync_product_images(client, product_id, image_urls, existing_images=None):
         for img in existing_images
     }
     added = 0
+    skipped = 0
+    errors = []
     position = len(existing_images)
 
     for url in image_urls:
@@ -115,15 +119,26 @@ def sync_product_images(client, product_id, image_urls, existing_images=None):
         if base in existing_bases:
             continue
         position += 1
-        client._request(
-            'POST',
-            f'products/{product_id}/images.json',
-            json={'image': {'src': url, 'position': position}},
-        )
-        existing_bases.add(base)
-        added += 1
+        try:
+            client._request(
+                'POST',
+                f'products/{product_id}/images.json',
+                json={'image': {'src': url, 'position': position}},
+                timeout=(15, 90),
+            )
+            existing_bases.add(base)
+            added += 1
+        except Exception as exc:
+            skipped += 1
+            errors.append(str(exc)[:160])
+            # Keep going — remaining images may still succeed.
+            continue
 
-    return added
+    return {
+        'added': added,
+        'skipped': skipped,
+        'errors': errors,
+    }
 
 
 def _pricing_for_product(product):
@@ -143,7 +158,7 @@ def _pricing_for_product(product):
     }
 
 
-def build_shopify_product_payload(product, handle):
+def build_shopify_product_payload(product, handle, include_images=False):
     variants = product.get('variants') or ['Default Title']
     option1_name = product.get('option1_name') or 'Title'
     has_real_variants = not (
@@ -178,7 +193,6 @@ def build_shopify_product_payload(product, handle):
 
     tags, product_type = _product_tags_and_type(product)
     image_urls = normalize_product_image_urls(product)
-    images = [{'src': url} for url in image_urls]
 
     payload = {
         'title': product.get('title') or 'Untitled Product',
@@ -189,8 +203,12 @@ def build_shopify_product_payload(product, handle):
         'handle': handle,
         'status': product_status,
         'variants': shopify_variants,
-        'images': images,
     }
+
+    # Prefer attaching images after create — Shopify fetching many remote images
+    # inline can exceed read timeouts even though the product was saved.
+    if include_images and image_urls:
+        payload['images'] = [{'src': url} for url in image_urls]
 
     if has_real_variants:
         payload['options'] = [{'name': option1_name}]
@@ -198,6 +216,54 @@ def build_shopify_product_payload(product, handle):
         payload['options'] = [{'name': 'Title'}]
 
     return payload
+
+
+def _recover_published_product(client, handle, title, product, exc, action_hint='created'):
+    """If Shopify saved the product but the HTTP response timed out, recover success."""
+    try:
+        existing = client.get_product_by_handle(handle)
+    except Exception:
+        existing = None
+
+    if not existing:
+        return None
+
+    image_urls = normalize_product_image_urls(product)
+    images_added = 0
+    image_sync = {'added': 0, 'skipped': 0, 'errors': []}
+    try:
+        if image_urls:
+            image_sync = sync_product_images(
+                client,
+                existing['id'],
+                image_urls,
+                existing_images=existing.get('images', []),
+            )
+            images_added = image_sync.get('added', 0) if isinstance(image_sync, dict) else image_sync
+            existing = client.get_product_by_handle(handle) or existing
+    except Exception:
+        pass
+
+    message = (
+        f'Product {action_hint} on Shopify (request timed out waiting for response, '
+        f'but the product exists). Original error: {exc}'
+    )
+    return {
+        'success': True,
+        'action': action_hint,
+        'title': title,
+        'shopify_handle': existing.get('handle', handle),
+        'shopify_product_id': str(existing.get('id', '')),
+        'markaz_url': product.get('url'),
+        'stock_status': product.get('stock_status', 'in_stock'),
+        'variants_count': len(existing.get('variants', [])),
+        'images_count': len(existing.get('images', [])),
+        'images_added': images_added,
+        'product_status': existing.get('status'),
+        'message': message,
+        'timeout_recovered': True,
+        'image_sync_errors': image_sync.get('errors') if isinstance(image_sync, dict) else [],
+    }
 
 
 def publish_product_to_shopify(product, client=None, fallback_index=0):
@@ -233,13 +299,16 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
                 },
             )
             images_added = 0
+            image_errors = []
             if image_urls:
-                images_added = sync_product_images(
+                image_sync = sync_product_images(
                     client,
                     existing['id'],
                     image_urls,
                     existing_images=existing.get('images', []),
                 )
+                images_added = image_sync.get('added', 0)
+                image_errors = image_sync.get('errors') or []
             refreshed = client.get_product_by_handle(handle) or existing
             message = 'Product updated; details refreshed and missing images added.'
             if sync_result:
@@ -249,6 +318,8 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
                     'Product updated and images synced, but inventory was not updated '
                     f'(needs `read_locations` scope): {stock_sync_warning}'
                 )
+            if image_errors:
+                message += f' Some images failed ({len(image_errors)}).'
             result = {
                 'success': True,
                 'action': 'updated',
@@ -267,23 +338,42 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
                 result.update({k: v for k, v in sync_result.items() if k != 'success'})
             return result
 
-        payload = build_shopify_product_payload(product, handle)
-        data = client._request('POST', 'products.json', json={'product': payload})
+        # Create without embedded images first (fast response), then attach images.
+        payload = build_shopify_product_payload(product, handle, include_images=False)
+        try:
+            data = client._request(
+                'POST',
+                'products.json',
+                json={'product': payload},
+                timeout=(15, 120),
+            )
+        except (Timeout, RequestException) as exc:
+            recovered = _recover_published_product(
+                client, handle, title, product, exc, action_hint='created',
+            )
+            if recovered:
+                return recovered
+            raise
+
         created = data.get('product', {})
+        product_id = created.get('id')
         images_count = len(created.get('images', []))
         images_added = 0
+        image_errors = []
 
-        if image_urls and images_count < len(image_urls):
-            images_added = sync_product_images(
+        if product_id and image_urls:
+            image_sync = sync_product_images(
                 client,
-                created['id'],
+                product_id,
                 image_urls,
                 existing_images=created.get('images', []),
             )
+            images_added = image_sync.get('added', 0)
+            image_errors = image_sync.get('errors') or []
             refreshed = client.get_product_by_handle(handle) or created
             images_count = len(refreshed.get('images', []))
 
-        return {
+        result = {
             'success': True,
             'action': 'created',
             'title': title,
@@ -296,7 +386,18 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
             'images_added': images_added,
             'product_status': payload.get('status'),
         }
+        if image_errors:
+            result['message'] = (
+                f'Product created, but {len(image_errors)} image(s) failed to upload.'
+            )
+            result['image_sync_errors'] = image_errors
+        return result
     except ShopifyAPIError as exc:
+        recovered = _recover_published_product(
+            client, handle, title, product, exc, action_hint='created',
+        )
+        if recovered:
+            return recovered
         return {
             'success': False,
             'title': title,
@@ -305,6 +406,11 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
             'error': str(exc),
         }
     except Exception as exc:
+        recovered = _recover_published_product(
+            client, handle, title, product, exc, action_hint='created',
+        )
+        if recovered:
+            return recovered
         return {
             'success': False,
             'title': title,

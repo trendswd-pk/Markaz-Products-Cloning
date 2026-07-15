@@ -1,3 +1,4 @@
+import html
 import json
 import os
 import re
@@ -163,15 +164,130 @@ def extract_breadcrumbs(page, title='', product_ld=None):
     return cleaned_items
 
 
+# Labels omitted from scraped description (seller metadata, not product specs).
+_DESCRIPTION_SKIP_LABELS = frozenset({'brand'})
+
+
+def _strip_html_text(value):
+    text = re.sub(r'(?is)<br\s*/?>', ' ', value or '')
+    text = re.sub(r'(?is)<[^>]+>', ' ', text)
+    text = re.sub(r'\s+', ' ', text).strip()
+    return html.unescape(text)
+
+
+def format_product_overview_html(html_source):
+    """
+    Build a clean description from Markaz Product overview HTML.
+
+    New Markaz layout uses <dt>/<dd> highlight cards (label + value stacked in the
+    DOM). Join each card as a single line: "• Fabric: Lawn".
+    Skip Specifications / Brand blocks.
+    """
+    if not html_source:
+        return ''
+
+    # Work only inside the expandable content region when present.
+    relative = re.search(
+        r'(?is)<div[^>]*class="[^"]*relative[^"]*max-h-\[[^"]*"[^>]*>(.*)$',
+        html_source,
+    )
+    content = relative.group(1) if relative else html_source
+
+    # Drop fade overlay and anything after it.
+    content = re.sub(r'(?is)<div[^>]*data-overview-fade[^>]*>.*$', '', content)
+
+    # Remove entire Specifications section (Brand and any other seller meta).
+    content = re.sub(
+        r'(?is)<p[^>]*>\s*Specifications\s*</p>.*?(?=<p[^>]*>\s*Highlights\s*</p>|$)',
+        '',
+        content,
+    )
+
+    parts = []
+    tokens = []
+    for match in re.finditer(
+        r'(?is)'
+        r'(<p\b[^>]*>.*?</p>)'
+        r'|(<dl\b[^>]*>.*?</dl>)'
+        r'|(<ul\b[^>]*>.*?</ul>)',
+        content,
+    ):
+        tokens.append(match.group(0))
+
+    for token in tokens:
+        if token.lower().startswith('<p'):
+            text = _strip_html_text(token)
+            if not text:
+                continue
+            if text.lower() == 'specifications':
+                continue
+            parts.append(text)
+            continue
+
+        if token.lower().startswith('<dl'):
+            for card in re.finditer(
+                r'(?is)<dt\b[^>]*>(.*?)</dt>\s*<dd\b[^>]*>(.*?)</dd>',
+                token,
+            ):
+                label = _strip_html_text(card.group(1))
+                value = _strip_html_text(card.group(2))
+                if not label or not value:
+                    continue
+                if label.lower() in _DESCRIPTION_SKIP_LABELS:
+                    continue
+                parts.append(f'• {label}: {value}')
+            continue
+
+        if token.lower().startswith('<ul'):
+            for li in re.finditer(r'(?is)<li\b[^>]*>(.*?)</li>', token):
+                text = _strip_html_text(li.group(1))
+                if text:
+                    parts.append(f'• {text}')
+
+    cleaned = []
+    for line in parts:
+        if cleaned and cleaned[-1] == line:
+            continue
+        cleaned.append(line)
+
+    return '\n'.join(cleaned)
+
+
+def _format_product_overview_text(overview_locator):
+    """Prefer structured HTML formatting; fall back to empty string on failure."""
+    html_source = overview_locator.evaluate('(el) => el.innerHTML')
+    return format_product_overview_html(html_source or '')
+
+
 def extract_description(page, product_ld=None):
     try:
-        overview = page.locator(
-            'xpath=//h2[contains(translate(.,"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz"),"product overview")]/parent::*'
-        ).first
+        overview = page.locator('#desktop-product-overview').first
+        if overview.count() == 0:
+            overview = page.locator(
+                'xpath=//h2[contains(translate(.,"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz"),"product overview")]/parent::*'
+            ).first
+
         if overview.count() > 0:
+            # Prefer structured dt/dd → "Label: Value" (new Markaz overview cards).
+            try:
+                formatted = _format_product_overview_text(overview)
+                if formatted and len(formatted) > 20:
+                    return formatted
+            except Exception:
+                pass
+
             text = overview.inner_text().strip()
             text = re.sub(r'^Product [Oo]verview\s*', '', text)
-            text = re.sub(r'\nShow more\s*$', '', text, flags=re.IGNORECASE)
+            text = re.sub(r'\nShow (more|less)\s*$', '', text, flags=re.IGNORECASE | re.MULTILINE)
+            text = re.sub(r'\nBrand\s*\n[^\n]+\n?', '\n', text, flags=re.IGNORECASE)
+            text = re.sub(r'\nSpecifications\s*\n?', '\n', text, flags=re.IGNORECASE)
+            # Collapse orphan label/value lines when structured HTML parse missed them.
+            text = re.sub(
+                r'(?im)^([A-Za-z][A-Za-z0-9 /&-]{1,40})\n([^\n]+)$',
+                r'• \1: \2',
+                text,
+            )
+            text = re.sub(r'\n{3,}', '\n\n', text).strip()
             if len(text) > 20:
                 return text
     except Exception:
@@ -181,6 +297,7 @@ def extract_description(page, product_ld=None):
         return product_ld['description'].strip()
 
     return 'No description available'
+
 
 
 def _is_size_value(text):

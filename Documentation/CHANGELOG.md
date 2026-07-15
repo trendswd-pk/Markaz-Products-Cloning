@@ -5,6 +5,22 @@ Documentation language: **English** throughout the `Documentation/` folder.
 
 ---
 
+## 2026-07-15
+
+### Shopify publish timeouts
+- Raised Shopify API read timeout from 30s to **120s** (connect 15s).
+- Create product **without** embedding all images in one request; attach images afterward (avoids slow Shopify remote-image fetch timing out the whole create).
+- If the HTTP response times out but the product already exists by handle, treat publish as **success** (recovered) instead of a false failure.
+- Image uploads continue on individual failures instead of aborting the whole product.
+
+### Product overview description formatting
+- Markaz product overview now uses `<dt>` / `<dd>` highlight cards (label and value stacked).
+- Scraper joins each card into a single bullet line, e.g. `• Fabric: Lawn` (no split title/value rows).
+- **Brand** / Specifications block is omitted from the Shopify description.
+- Fallback still cleans legacy plain `inner_text` if structured HTML parse fails.
+
+---
+
 ## 2026-07-14
 
 ### Vendor name
