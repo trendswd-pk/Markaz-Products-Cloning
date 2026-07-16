@@ -23,9 +23,12 @@ def activate_demo_mode():
     supabase_store.get_tracked_product_by_url = demo_store.get_tracked_product_by_url
     supabase_store.get_tracked_product_by_handle = demo_store.get_tracked_product_by_handle
     supabase_store.upsert_tracked_product = demo_store.upsert_tracked_product
+    supabase_store.batch_upsert_tracked_products = demo_store.batch_upsert_tracked_products
     supabase_store.update_tracked_stock_status = demo_store.update_tracked_stock_status
     supabase_store.update_tracked_shopify_metadata = demo_store.update_tracked_shopify_metadata
+    supabase_store.update_tracked_shopify_metadata_batch = demo_store.update_tracked_shopify_metadata_batch
     supabase_store.delete_tracked_product = demo_store.delete_tracked_product
+    supabase_store.delete_tracked_products = demo_store.delete_tracked_products
 
     shopify_config.is_shopify_configured = lambda: True
 

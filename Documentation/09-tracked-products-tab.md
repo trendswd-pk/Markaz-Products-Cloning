@@ -99,8 +99,11 @@ Saved fields:
 
 ## Performance notes
 
-- Tracked list is **session-cached** to protect Supabase free-tier quotas
-- Only the active dashboard section loads (radio, not dual tabs)
+- Tracked list is **session-cached** — loaded once, then updated in memory (add/update/delete do not refetch the full list).
+- Use **Reload list** only when you need a fresh pull from Supabase.
+- **RPC functions** (`supabase/03_rpc_functions.sql`) reduce server-side Supabase calls to one request per operation.
+- Only the active dashboard section loads (radio, not dual tabs).
+- Browser DevTools may show many `markazapp.streamlit.app/api/v2/app/status` requests — those are **Streamlit Cloud heartbeats**, not Supabase.
 - See [CHANGELOG.md](./CHANGELOG.md)
 
 ## Sub-pages

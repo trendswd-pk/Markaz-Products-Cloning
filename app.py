@@ -19,10 +19,11 @@ from shopify_sync import (
 from shopify_publish import publish_products_to_shopify
 from supabase_config import is_supabase_configured
 from supabase_store import (
+    batch_upsert_tracked_products,
     delete_tracked_product,
     delete_tracked_products,
     list_tracked_products,
-    update_tracked_shopify_metadata,
+    update_tracked_shopify_metadata_batch,
     update_tracked_stock_status,
     upsert_tracked_product,
 )
@@ -433,7 +434,12 @@ def save_product_to_supabase(product_data):
             title=product_data.get('title'),
             shopify_handle=shopify_handle,
         )
-        invalidate_tracked_rows_cache()
+        patch_tracked_row_in_cache({
+            'markaz_url': markaz_url,
+            'stock_status': product_data.get('stock_status', 'unknown'),
+            'title': product_data.get('title'),
+            'shopify_handle': shopify_handle,
+        })
         return True, None
     except Exception as exc:
         return False, str(exc)
@@ -451,7 +457,8 @@ def update_tracked_product_from_scrape(markaz_url, scraped_data):
         title=scraped_data.get('title'),
         shopify_handle=shopify_handle,
     )
-    invalidate_tracked_rows_cache()
+    if result:
+        patch_tracked_row_in_cache(result)
     return result
 
 
@@ -566,10 +573,60 @@ def invalidate_tracked_rows_cache():
     st.session_state.pop('tracked_rows_cache', None)
 
 
+def _increment_supabase_fetch_count():
+    st.session_state['supabase_fetch_count'] = (
+        st.session_state.get('supabase_fetch_count', 0) + 1
+    )
+
+
+def patch_tracked_row_in_cache(row):
+    """Update session cache in-place — avoids a full Supabase list refetch."""
+    if not row or not row.get('markaz_url'):
+        return
+    cache = st.session_state.get('tracked_rows_cache')
+    if cache is None:
+        return
+    markaz_url = row['markaz_url']
+    for index, existing in enumerate(cache):
+        if existing.get('markaz_url') == markaz_url:
+            cache[index] = {**existing, **row}
+            return
+    cache.insert(0, row)
+
+
+def remove_tracked_rows_from_cache(markaz_urls):
+    urls = {url for url in (markaz_urls or []) if url}
+    if not urls:
+        return
+    cache = st.session_state.get('tracked_rows_cache')
+    if cache is None:
+        return
+    st.session_state.tracked_rows_cache = [
+        row for row in cache if row.get('markaz_url') not in urls
+    ]
+
+
+def set_tracked_rows_cache(rows):
+    st.session_state.tracked_rows_cache = rows or []
+
+
+def _merge_tracked_rows_cache(existing_rows, updated_rows):
+    """Merge batch upsert results into cached list without refetching."""
+    by_url = {row.get('markaz_url'): row for row in (existing_rows or []) if row.get('markaz_url')}
+    for row in updated_rows or []:
+        url = row.get('markaz_url')
+        if url:
+            by_url[url] = {**by_url.get(url, {}), **row}
+    merged = list(by_url.values())
+    merged.sort(key=lambda row: row.get('created_at') or '', reverse=True)
+    return merged
+
+
 def load_tracked_rows(force_refresh=False):
-    """Load tracked products once per session until mutated (cuts Supabase list spam)."""
+    """Load tracked products once per session until Reload or force_refresh."""
     if force_refresh or 'tracked_rows_cache' not in st.session_state:
         st.session_state.tracked_rows_cache = list_tracked_products()
+        _increment_supabase_fetch_count()
     return st.session_state.tracked_rows_cache
 
 
@@ -643,22 +700,30 @@ def render_tracked_products_heading():
 def apply_shopify_sync_results(results):
     synced_count = 0
     failed_results = []
+    metadata_batch = []
 
     for result in results:
         if result.get('success'):
             synced_count += 1
             markaz_url = result.get('markaz_url')
             if markaz_url:
-                update_tracked_shopify_metadata(
-                    markaz_url,
-                    shopify_product_id=result.get('shopify_product_id'),
-                    shopify_handle=result.get('shopify_handle'),
-                )
+                metadata_batch.append({
+                    'markaz_url': markaz_url,
+                    'shopify_product_id': result.get('shopify_product_id'),
+                    'shopify_handle': result.get('shopify_handle'),
+                })
+                patch_tracked_row_in_cache({
+                    'markaz_url': markaz_url,
+                    'shopify_product_id': result.get('shopify_product_id'),
+                    'shopify_handle': result.get('shopify_handle'),
+                    'stock_status': result.get('stock_status'),
+                })
         else:
             failed_results.append(result)
 
-    if synced_count:
-        invalidate_tracked_rows_cache()
+    if metadata_batch:
+        update_tracked_shopify_metadata_batch(metadata_batch)
+
     return synced_count, failed_results
 
 
@@ -679,6 +744,7 @@ def apply_shopify_publish_results(results):
     updated_count = 0
     failed_results = []
     warning_results = []
+    upsert_batch = []
 
     for result in results:
         if result.get('success'):
@@ -696,19 +762,20 @@ def apply_shopify_publish_results(results):
 
             markaz_url = result.get('markaz_url')
             if markaz_url and is_supabase_configured():
-                # One write instead of upsert + separate metadata update.
-                upsert_tracked_product(
-                    markaz_url=markaz_url,
-                    stock_status=result.get('stock_status', 'unknown'),
-                    title=result.get('title'),
-                    shopify_handle=result.get('shopify_handle'),
-                    shopify_product_id=result.get('shopify_product_id'),
-                )
+                upsert_batch.append({
+                    'markaz_url': markaz_url,
+                    'stock_status': result.get('stock_status', 'unknown'),
+                    'title': result.get('title'),
+                    'shopify_handle': result.get('shopify_handle'),
+                    'shopify_product_id': result.get('shopify_product_id'),
+                })
         else:
             failed_results.append(result)
 
-    if created_count or updated_count:
-        invalidate_tracked_rows_cache()
+    if upsert_batch:
+        saved_rows = batch_upsert_tracked_products(upsert_batch)
+        for row in saved_rows:
+            patch_tracked_row_in_cache(row)
 
     return created_count, updated_count, failed_results, warning_results
 
@@ -1016,11 +1083,11 @@ def render_tracked_products_tab():
             if urls_to_delete:
                 delete_tracked_products(urls_to_delete)
                 removed_count = len(urls_to_delete)
+                remove_tracked_rows_from_cache(urls_to_delete)
 
             progress.progress(1.0, text="Done.")
             status_container.caption("Finished.")
             st.session_state.pop('bulk_delete_pending_rows', None)
-            invalidate_tracked_rows_cache()
             invalidate_shopify_status_cache()
 
             st.success(
@@ -1035,23 +1102,37 @@ def render_tracked_products_tab():
             st.rerun()
 
     if refresh_shopify_status:
-        load_tracked_rows(force_refresh=True)
+        invalidate_shopify_status_cache()
         load_shopify_status_map(load_tracked_rows(), force_refresh=True)
         st.rerun()
 
     if refresh_all:
         tracked_rows = load_tracked_rows()
         progress = st.progress(0.0, text="Refreshing stock status...")
+        batch_items = []
         for index, row in enumerate(tracked_rows):
             progress.progress((index + 1) / len(tracked_rows), text=f"Checking {index + 1} of {len(tracked_rows)}")
             scraped = scrape_markaz_product(row['markaz_url'])
             if scraped.get('status') == 'success':
-                update_tracked_product_from_scrape(row['markaz_url'], scraped)
-        progress.progress(1.0, text="Done.")
+                shopify_handle = generate_unique_handle(
+                    scraped.get('title', ''),
+                    scraped.get('base_sku', ''),
+                )
+                batch_items.append({
+                    'markaz_url': row['markaz_url'],
+                    'stock_status': scraped.get('stock_status', 'unknown'),
+                    'title': scraped.get('title'),
+                    'shopify_handle': shopify_handle,
+                })
+        progress.progress(1.0, text="Saving to Supabase...")
+        if batch_items:
+            saved_rows = batch_upsert_tracked_products(batch_items)
+            set_tracked_rows_cache(
+                _merge_tracked_rows_cache(load_tracked_rows(), saved_rows)
+            )
         st.success("Stock status refreshed for all tracked products.")
 
-        invalidate_tracked_rows_cache()
-        refreshed_rows = load_tracked_rows(force_refresh=True)
+        refreshed_rows = load_tracked_rows()
 
         if auto_sync_shopify and is_shopify_configured():
             sync_results = sync_tracked_rows_to_shopify(refreshed_rows)
@@ -1147,6 +1228,13 @@ def render_tracked_products_tab():
         )
 
     render_shopify_status_summary(tracked_rows, shopify_status_map)
+    fetch_count = st.session_state.get('supabase_fetch_count', 0)
+    if fetch_count:
+        st.caption(
+            f"Supabase list loaded from cache this session "
+            f"(**{fetch_count}** full fetch{'es' if fetch_count != 1 else ''} to database). "
+            "Use **Reload list** only when you need fresh data."
+        )
 
     if not filtered_rows:
         st.info(f"No products match filter **{filter_label}**.")
@@ -1307,7 +1395,7 @@ def render_tracked_products_tab():
                             shopify_delete_result = delete_tracked_row_from_shopify(row)
 
                     delete_tracked_product(row['markaz_url'])
-                    invalidate_tracked_rows_cache()
+                    remove_tracked_rows_from_cache([row['markaz_url']])
                     invalidate_shopify_status_cache()
 
                     if shopify_delete_result and shopify_delete_result.get('success'):

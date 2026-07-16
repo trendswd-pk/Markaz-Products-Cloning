@@ -46,10 +46,19 @@ key = "YOUR_SERVICE_ROLE_KEY"
 ### Setup steps
 
 1. Create project at [supabase.com](https://supabase.com)
-2. SQL Editor → run `supabase/01_fresh_install.sql`
-3. Copy URL + service_role key from Project Settings → API
-4. Paste into `secrets.toml`
-5. Restart app
+2. SQL Editor → run `supabase/01_fresh_install.sql` (or `02_update_existing_table.sql` if table exists)
+3. SQL Editor → run `supabase/03_rpc_functions.sql` (recommended — fewer API calls from the app)
+4. Copy URL + service_role key from Project Settings → API
+5. Paste into `secrets.toml`
+6. Restart app
+
+Verify:
+
+```bash
+python check_supabase.py
+```
+
+Should report `RPC functions: installed`.
 
 **Without Supabase:** Tracked Products section shows a warning. Converter still works.
 
@@ -129,7 +138,7 @@ Not used by Streamlit UI. Returns JSON product data.
 
 - [ ] `playwright install chromium`
 - [ ] `[app_login]` configured
-- [ ] `[supabase]` configured + SQL migration run
+- [ ] `[supabase]` configured + SQL migration run (`01` or `02` + `03_rpc_functions.sql`)
 - [ ] `[shopify]` configured + scopes approved on store
 - [ ] `python check_shopify.py` passes
 - [ ] `python check_supabase.py` passes

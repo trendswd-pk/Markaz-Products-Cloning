@@ -5,6 +5,24 @@ Documentation language: **English** throughout the `Documentation/` folder.
 
 ---
 
+## 2026-07-16
+
+### Supabase — fewer API calls (RPC + session cache)
+- Added PostgreSQL RPC functions in `supabase/03_rpc_functions.sql`:
+  - `list_tracked_products_rpc` — one call to load all rows
+  - `upsert_tracked_product_rpc` — one call per save (no update-then-insert round trip)
+  - `batch_upsert_tracked_products_rpc` — one call after **Refresh All**
+  - `batch_update_shopify_metadata_rpc` — one call after bulk Shopify sync
+  - `delete_tracked_products_rpc` — one call for bulk delete
+- Python auto-detects RPC; falls back to table REST API if SQL not run yet.
+- Tracked list stays in `session_state` and is **patched in place** after add/update/delete (no automatic refetch).
+- **Reload list** is the only manual full refetch.
+- Tracked Products shows how many full Supabase fetches happened this session.
+
+**Note:** Browser Network tab URLs like `markazapp.streamlit.app/api/v2/app/status` are Streamlit Cloud heartbeats — not Supabase. Supabase calls run server-side.
+
+---
+
 ## 2026-07-15
 
 ### Shopify publish timeouts

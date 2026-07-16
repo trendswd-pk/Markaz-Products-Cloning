@@ -120,3 +120,43 @@ def delete_tracked_product(markaz_url):
     rows = [row for row in _load_rows() if row.get('markaz_url') != markaz_url]
     _save_rows(rows)
     return True
+
+
+def delete_tracked_products(markaz_urls):
+    urls = {url for url in (markaz_urls or []) if url}
+    if not urls:
+        return True
+    rows = [row for row in _load_rows() if row.get('markaz_url') not in urls]
+    _save_rows(rows)
+    return True
+
+
+def batch_upsert_tracked_products(items):
+    results = []
+    for item in items or []:
+        row = upsert_tracked_product(
+            markaz_url=item.get('markaz_url'),
+            stock_status=item.get('stock_status', 'unknown'),
+            title=item.get('title'),
+            shopify_handle=item.get('shopify_handle'),
+            user_id=item.get('user_id'),
+        )
+        if row:
+            if item.get('shopify_product_id'):
+                row['shopify_product_id'] = str(item['shopify_product_id'])
+            results.append(row)
+    _save_rows(_load_rows())
+    return results
+
+
+def update_tracked_shopify_metadata_batch(items):
+    updated = 0
+    for item in items or []:
+        result = update_tracked_shopify_metadata(
+            item.get('markaz_url'),
+            shopify_product_id=item.get('shopify_product_id'),
+            shopify_handle=item.get('shopify_handle'),
+        )
+        if result:
+            updated += 1
+    return updated
