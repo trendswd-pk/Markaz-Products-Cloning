@@ -525,7 +525,11 @@ def format_stock_status_label(stock_status):
 
 
 def format_shopify_status_label(snapshot):
-    if not snapshot or not snapshot.get('on_shopify'):
+    if not snapshot:
+        return 'Not on Shopify'
+    if snapshot.get('status_unknown') or snapshot.get('rate_limited'):
+        return 'Shopify: Linked'
+    if not snapshot.get('on_shopify'):
         return 'Not on Shopify'
 
     status = (snapshot.get('status') or 'unknown').lower()
@@ -538,8 +542,21 @@ def format_shopify_status_label(snapshot):
 
 
 def format_shopify_status_detail(snapshot):
-    if not snapshot or not snapshot.get('on_shopify'):
-        if snapshot and snapshot.get('error'):
+    if not snapshot:
+        return 'Not on Shopify'
+
+    if snapshot.get('status_unknown') or snapshot.get('rate_limited'):
+        handle = snapshot.get('shopify_handle') or '—'
+        err = snapshot.get('error') or 'Live status not loaded yet'
+        if snapshot.get('rate_limited') or '429' in str(err):
+            return (
+                f"**Linked** · handle `{handle}` · live status pending "
+                f"(Shopify rate limit — click **Refresh Shopify Status** and wait)."
+            )
+        return f"**Linked** · handle `{handle}` · {err}"
+
+    if not snapshot.get('on_shopify'):
+        if snapshot.get('error'):
             return f"Not on Shopify ({snapshot['error']})"
         return 'Not on Shopify'
 
@@ -630,12 +647,47 @@ def load_tracked_rows(force_refresh=False):
     return st.session_state.tracked_rows_cache
 
 
+def seed_shopify_status_map_from_rows(tracked_rows):
+    """Provisional status from Supabase fields — no Shopify API calls."""
+    status_map = {}
+    for row in tracked_rows or []:
+        row_key = row.get('markaz_url') or row.get('id')
+        handle = (row.get('shopify_handle') or '').strip()
+        product_id = (row.get('shopify_product_id') or '').strip()
+        if handle or product_id:
+            status_map[row_key] = {
+                'on_shopify': True,
+                'status_unknown': True,
+                'status': None,
+                'shopify_handle': handle or None,
+                'shopify_product_id': product_id or None,
+                'admin_url': '',
+            }
+        else:
+            status_map[row_key] = {'on_shopify': False, 'status': None}
+    return status_map
+
+
 def load_shopify_status_map(tracked_rows, force_refresh=False):
     if not is_shopify_configured():
         return {}
 
-    if force_refresh or 'shopify_status_map' not in st.session_state:
-        st.session_state.shopify_status_map = fetch_shopify_status_map(tracked_rows)
+    if force_refresh:
+        with st.spinner(
+            "Fetching Shopify status (rate-limited ~2 calls/sec; "
+            "products with saved IDs load in bulk)..."
+        ):
+            previous = st.session_state.get('shopify_status_map') or {}
+            st.session_state.shopify_status_map = fetch_shopify_status_map(
+                tracked_rows,
+                existing_map=previous,
+            )
+        return st.session_state.shopify_status_map
+
+    if 'shopify_status_map' not in st.session_state:
+        # First open this session: show linked/not-linked from DB only.
+        # Live Active/Draft comes from "Refresh Shopify Status" (avoids 429 spam).
+        st.session_state.shopify_status_map = seed_shopify_status_map_from_rows(tracked_rows)
 
     return st.session_state.shopify_status_map
 
@@ -648,7 +700,29 @@ def refresh_shopify_status_for_row(row):
     if 'shopify_status_map' not in st.session_state:
         st.session_state.shopify_status_map = {}
 
-    st.session_state.shopify_status_map.update(fetch_shopify_status_map([row]))
+    previous = st.session_state.shopify_status_map
+    st.session_state.shopify_status_map.update(
+        fetch_shopify_status_map([row], existing_map=previous)
+    )
+    snapshot = st.session_state.shopify_status_map.get(row_key) or {}
+    # Persist product_id when live lookup found it (speeds future bulk refresh).
+    if (
+        snapshot.get('on_shopify')
+        and not snapshot.get('status_unknown')
+        and snapshot.get('shopify_product_id')
+        and row.get('markaz_url')
+        and is_supabase_configured()
+    ):
+        update_tracked_shopify_metadata_batch([{
+            'markaz_url': row.get('markaz_url'),
+            'shopify_product_id': snapshot.get('shopify_product_id'),
+            'shopify_handle': snapshot.get('shopify_handle') or row.get('shopify_handle'),
+        }])
+        patch_tracked_row_in_cache({
+            'markaz_url': row.get('markaz_url'),
+            'shopify_product_id': snapshot.get('shopify_product_id'),
+            'shopify_handle': snapshot.get('shopify_handle') or row.get('shopify_handle'),
+        })
     return row_key in st.session_state.shopify_status_map
 
 
@@ -674,6 +748,14 @@ def render_shopify_status_summary(tracked_rows, shopify_status_map):
         f"Shopify: **{on_shopify}** of **{len(tracked_rows)}** tracked product(s) found on store "
         f"({active_count} active, {draft_count} draft)."
     )
+    if any(
+        (shopify_status_map.get(row.get('markaz_url') or row.get('id')) or {}).get('status_unknown')
+        for row in tracked_rows
+    ):
+        st.caption(
+            "Some products show **Shopify: Linked** until you click **Refresh Shopify Status** "
+            "(avoids Shopify 429 rate-limit errors on every page load)."
+        )
 
 
 SHOPIFY_ICON_PATH = Path(__file__).resolve().parent / 'assets' / 'shopify-icon.svg'
@@ -975,7 +1057,10 @@ def render_tracked_products_tab():
             type="secondary",
             key="refresh_shopify_status_map",
             disabled=not is_shopify_configured(),
-            help="Fetch latest product status from Shopify for all tracked products.",
+            help=(
+                "Fetch live Active/Draft status from Shopify. "
+                "Uses bulk ID lookup + rate limiting (~2 calls/sec) to avoid 429 errors."
+            ),
         )
     with send_col:
         send_to_converter = st.button(
@@ -1102,8 +1187,54 @@ def render_tracked_products_tab():
             st.rerun()
 
     if refresh_shopify_status:
-        invalidate_shopify_status_cache()
-        load_shopify_status_map(load_tracked_rows(), force_refresh=True)
+        tracked_for_status = load_tracked_rows()
+        previous_map = st.session_state.get('shopify_status_map') or {}
+        with st.spinner(
+            "Fetching Shopify status (bulk by product ID; handles throttled "
+            "to stay under 2 calls/sec)..."
+        ):
+            fresh_map = fetch_shopify_status_map(
+                tracked_for_status,
+                existing_map=previous_map,
+            )
+        st.session_state.shopify_status_map = fresh_map
+
+        # Save newly discovered product IDs so next refresh is mostly 1 bulk call.
+        metadata_batch = []
+        for row in tracked_for_status:
+            row_key = row.get('markaz_url') or row.get('id')
+            snapshot = fresh_map.get(row_key) or {}
+            if (
+                snapshot.get('on_shopify')
+                and not snapshot.get('status_unknown')
+                and snapshot.get('shopify_product_id')
+                and row.get('markaz_url')
+            ):
+                if str(row.get('shopify_product_id') or '') != str(snapshot.get('shopify_product_id')):
+                    metadata_batch.append({
+                        'markaz_url': row.get('markaz_url'),
+                        'shopify_product_id': snapshot.get('shopify_product_id'),
+                        'shopify_handle': snapshot.get('shopify_handle') or row.get('shopify_handle'),
+                    })
+                    patch_tracked_row_in_cache({
+                        'markaz_url': row.get('markaz_url'),
+                        'shopify_product_id': snapshot.get('shopify_product_id'),
+                        'shopify_handle': snapshot.get('shopify_handle') or row.get('shopify_handle'),
+                    })
+        if metadata_batch and is_supabase_configured():
+            update_tracked_shopify_metadata_batch(metadata_batch)
+
+        rate_limited = sum(
+            1 for snap in fresh_map.values()
+            if snap.get('rate_limited') or snap.get('status_unknown')
+        )
+        if rate_limited:
+            st.warning(
+                f"Shopify status refreshed with **{rate_limited}** product(s) still pending "
+                "(rate limit / not fully loaded). Click **Refresh Shopify Status** again after a few seconds."
+            )
+        else:
+            st.success("Shopify status refreshed for tracked products.")
         st.rerun()
 
     if refresh_all:
@@ -1315,7 +1446,16 @@ def render_tracked_products_tab():
                     st.markdown(f"**Open in Shopify:** [{admin_url}]({admin_url})")
             elif row.get('shopify_handle'):
                 st.write("**Shopify Handle (saved):**", row['shopify_handle'])
-                st.caption("Handle is saved locally but product was not found on Shopify.")
+                if shopify_snapshot.get('error') and '429' in str(shopify_snapshot.get('error')):
+                    st.caption(
+                        "Shopify rate limit hit while checking this product. "
+                        "Wait a few seconds, then click **Shopify Status** again."
+                    )
+                else:
+                    st.caption(
+                        "Handle is saved, but Shopify did not return this product "
+                        "(deleted on Shopify, or status not refreshed yet)."
+                    )
 
             st.write("**Markaz URL:**", row.get('markaz_url'))
             if row.get('last_checked_at'):

@@ -17,7 +17,7 @@ def get_shopify_client():
     return DemoShopifyClient()
 
 
-def fetch_shopify_status_map(tracked_rows):
+def fetch_shopify_status_map(tracked_rows, existing_map=None):
     return build_dummy_shopify_status_map(tracked_rows)
 
 

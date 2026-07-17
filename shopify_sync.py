@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 
 import requests
 
@@ -8,6 +10,13 @@ from shopify_config import DEFAULT_API_VERSION, get_shopify_credentials, is_shop
 DEFAULT_IN_STOCK_QTY = 50
 # Product create/update with images often exceeds 30s while Shopify fetches remote URLs.
 DEFAULT_REQUEST_TIMEOUT = (15, 120)
+# Shopify Admin API bucket: ~2 calls/second for many apps.
+SHOPIFY_MIN_REQUEST_INTERVAL = 0.55
+SHOPIFY_MAX_RETRIES = 5
+SHOPIFY_IDS_CHUNK_SIZE = 50
+
+_RATE_LOCK = threading.Lock()
+_LAST_REQUEST_AT = 0.0
 
 
 def _block_demo_shopify_api(action='access Shopify'):
@@ -18,8 +27,26 @@ def _block_demo_shopify_api(action='access Shopify'):
     block_real_shopify_api(action)
 
 
+def _throttle_shopify_request():
+    """Keep request rate under Shopify's ~2 calls/second limit."""
+    global _LAST_REQUEST_AT
+    with _RATE_LOCK:
+        now = time.monotonic()
+        wait = SHOPIFY_MIN_REQUEST_INTERVAL - (now - _LAST_REQUEST_AT)
+        if wait > 0:
+            time.sleep(wait)
+        _LAST_REQUEST_AT = time.monotonic()
+
+
 class ShopifyAPIError(Exception):
-    pass
+    def __init__(self, message, status_code=None, retry_after=None):
+        super().__init__(message)
+        self.status_code = status_code
+        self.retry_after = retry_after
+
+    @property
+    def is_rate_limited(self):
+        return self.status_code == 429
 
 
 class ShopifyClient:
@@ -42,19 +69,46 @@ class ShopifyClient:
 
     def _request(self, method, path, timeout=None, **kwargs):
         _block_demo_shopify_api(f'call Shopify API ({method} {path})')
-        response = self.session.request(
-            method,
-            f'{self.base_url}/{path}',
-            timeout=timeout if timeout is not None else DEFAULT_REQUEST_TIMEOUT,
-            **kwargs,
-        )
-        if not response.ok:
-            raise ShopifyAPIError(
-                f'Shopify API {response.status_code}: {response.text[:300]}'
+        last_error = None
+
+        for attempt in range(SHOPIFY_MAX_RETRIES):
+            _throttle_shopify_request()
+            response = self.session.request(
+                method,
+                f'{self.base_url}/{path}',
+                timeout=timeout if timeout is not None else DEFAULT_REQUEST_TIMEOUT,
+                **kwargs,
             )
-        if response.text:
-            return response.json()
-        return {}
+
+            if response.status_code == 429:
+                retry_after = response.headers.get('Retry-After')
+                try:
+                    sleep_s = float(retry_after) if retry_after else (1.0 * (attempt + 1))
+                except ValueError:
+                    sleep_s = 1.0 * (attempt + 1)
+                sleep_s = max(sleep_s, 1.0)
+                last_error = ShopifyAPIError(
+                    f'Shopify API 429: {response.text[:300]}',
+                    status_code=429,
+                    retry_after=sleep_s,
+                )
+                time.sleep(sleep_s)
+                continue
+
+            if not response.ok:
+                raise ShopifyAPIError(
+                    f'Shopify API {response.status_code}: {response.text[:300]}',
+                    status_code=response.status_code,
+                )
+
+            if response.text:
+                return response.json()
+            return {}
+
+        raise last_error or ShopifyAPIError(
+            'Shopify API rate limit exceeded after retries.',
+            status_code=429,
+        )
 
     def test_connection(self):
         data = self._request('GET', 'shop.json')
@@ -164,18 +218,7 @@ class ShopifyClient:
         except Exception as exc:
             return None, str(exc)
 
-    def get_product_status_snapshot(self, handle=None, product_id=None):
-        product = None
-        if product_id:
-            try:
-                data = self._request('GET', f'products/{product_id}.json')
-                product = data.get('product')
-            except ShopifyAPIError:
-                product = None
-
-        if not product and handle:
-            product = self.get_product_by_handle(handle)
-
+    def snapshot_from_product(self, product):
         if not product:
             return {
                 'on_shopify': False,
@@ -185,7 +228,6 @@ class ShopifyClient:
 
         variants = product.get('variants', [])
         total_inventory = sum(int(variant.get('inventory_quantity') or 0) for variant in variants)
-
         return {
             'on_shopify': True,
             'shopify_product_id': str(product.get('id', '')),
@@ -198,6 +240,51 @@ class ShopifyClient:
             'updated_at': product.get('updated_at'),
             'published_at': product.get('published_at'),
         }
+
+    def get_products_by_ids(self, product_ids):
+        """Fetch many products in few requests: GET products.json?ids=..."""
+        ids = []
+        seen = set()
+        for raw in product_ids or []:
+            pid = str(raw or '').strip()
+            if not pid or pid in seen:
+                continue
+            seen.add(pid)
+            ids.append(pid)
+
+        products_by_id = {}
+        for start in range(0, len(ids), SHOPIFY_IDS_CHUNK_SIZE):
+            chunk = ids[start:start + SHOPIFY_IDS_CHUNK_SIZE]
+            data = self._request(
+                'GET',
+                'products.json',
+                params={'ids': ','.join(chunk), 'limit': len(chunk)},
+            )
+            for product in data.get('products', []) or []:
+                products_by_id[str(product.get('id'))] = product
+        return products_by_id
+
+    def get_product_status_snapshot(self, handle=None, product_id=None):
+        product = None
+        if product_id:
+            try:
+                data = self._request('GET', f'products/{product_id}.json')
+                product = data.get('product')
+            except ShopifyAPIError as exc:
+                if getattr(exc, 'is_rate_limited', False):
+                    raise
+                # 404 / other — try handle fallback below
+                product = None
+
+        if not product and handle:
+            try:
+                product = self.get_product_by_handle(handle)
+            except ShopifyAPIError as exc:
+                if getattr(exc, 'is_rate_limited', False):
+                    raise
+                raise
+
+        return self.snapshot_from_product(product)
 
 
 def get_shopify_client():
@@ -253,36 +340,117 @@ def get_shopify_admin_product_url(product_id):
     return f'{store_url}/admin/products/{product_id}'
 
 
-def fetch_shopify_status_map(tracked_rows):
+def _linked_but_unchecked_snapshot(row, error=None):
+    """When API fails (e.g. 429), do not pretend the product is missing."""
+    handle = (row.get('shopify_handle') or '').strip()
+    product_id = (row.get('shopify_product_id') or '').strip()
+    return {
+        'on_shopify': True,
+        'status_unknown': True,
+        'status': None,
+        'shopify_handle': handle or None,
+        'shopify_product_id': product_id or None,
+        'admin_url': get_shopify_admin_product_url(product_id) if product_id else '',
+        'error': error,
+        'rate_limited': bool(error and '429' in str(error)),
+    }
+
+
+def fetch_shopify_status_map(tracked_rows, existing_map=None):
+    """Build Shopify status map with bulk ID lookups + rate-limit-safe fallbacks.
+
+    Prefer GET products.json?ids=... (few calls) over one request per product.
+    On 429, keep previous successful snapshot when available instead of "Not on Shopify".
+    """
     if not is_shopify_configured():
         return {}
 
     client = get_shopify_client()
     status_map = {}
+    existing_map = existing_map or {}
 
-    for row in tracked_rows:
+    rows_with_ids = []
+    rows_handle_only = []
+    rows_unlinked = []
+
+    for row in tracked_rows or []:
         row_key = row.get('markaz_url') or row.get('id')
         handle = (row.get('shopify_handle') or '').strip()
         product_id = (row.get('shopify_product_id') or '').strip()
+        if product_id:
+            rows_with_ids.append((row_key, row, product_id))
+        elif handle:
+            rows_handle_only.append((row_key, row, handle))
+        else:
+            rows_unlinked.append(row_key)
 
-        if not handle and not product_id:
-            status_map[row_key] = {'on_shopify': False, 'status': None}
-            continue
+    for row_key in rows_unlinked:
+        status_map[row_key] = {'on_shopify': False, 'status': None}
 
-        try:
-            snapshot = client.get_product_status_snapshot(
-                handle=handle or None,
-                product_id=product_id or None,
-            )
-            if snapshot.get('on_shopify'):
-                snapshot['admin_url'] = get_shopify_admin_product_url(snapshot.get('shopify_product_id'))
+    # Bulk fetch by Shopify product IDs (1 API call per ~50 products).
+    try:
+        products_by_id = client.get_products_by_ids(
+            [product_id for _, _, product_id in rows_with_ids]
+        )
+    except ShopifyAPIError as exc:
+        products_by_id = {}
+        for row_key, row, _product_id in rows_with_ids:
+            previous = existing_map.get(row_key)
+            if previous and previous.get('on_shopify') and not previous.get('status_unknown'):
+                status_map[row_key] = previous
+            else:
+                status_map[row_key] = _linked_but_unchecked_snapshot(row, error=str(exc))
+        rows_with_ids = []
+
+    found_ids = set()
+    for row_key, row, product_id in rows_with_ids:
+        product = products_by_id.get(str(product_id))
+        if product:
+            snapshot = client.snapshot_from_product(product)
+            snapshot['admin_url'] = get_shopify_admin_product_url(snapshot.get('shopify_product_id'))
             status_map[row_key] = snapshot
+            found_ids.add(row_key)
+        else:
+            # ID saved but product missing — try handle next.
+            handle = (row.get('shopify_handle') or '').strip()
+            if handle:
+                rows_handle_only.append((row_key, row, handle))
+            else:
+                status_map[row_key] = {
+                    'on_shopify': False,
+                    'status': None,
+                    'error': 'Saved Shopify product ID not found',
+                }
+
+    # Handle-only rows (and ID misses): one throttled request each.
+    for row_key, row, handle in rows_handle_only:
+        if row_key in found_ids or row_key in status_map:
+            continue
+        try:
+            snapshot = client.get_product_status_snapshot(handle=handle)
+            if snapshot.get('on_shopify'):
+                snapshot['admin_url'] = get_shopify_admin_product_url(
+                    snapshot.get('shopify_product_id')
+                )
+            status_map[row_key] = snapshot
+        except ShopifyAPIError as exc:
+            previous = existing_map.get(row_key)
+            if previous and previous.get('on_shopify') and not previous.get('status_unknown'):
+                status_map[row_key] = previous
+            elif row.get('shopify_product_id') or row.get('shopify_handle'):
+                status_map[row_key] = _linked_but_unchecked_snapshot(row, error=str(exc))
+            else:
+                status_map[row_key] = {
+                    'on_shopify': False,
+                    'status': None,
+                    'error': str(exc),
+                }
         except Exception as exc:
-            status_map[row_key] = {
-                'on_shopify': False,
-                'status': None,
-                'error': str(exc),
-            }
+            previous = existing_map.get(row_key)
+            if previous and previous.get('on_shopify') and not previous.get('status_unknown'):
+                status_map[row_key] = previous
+            else:
+                status_map[row_key] = _linked_but_unchecked_snapshot(row, error=str(exc))
 
     return status_map
 

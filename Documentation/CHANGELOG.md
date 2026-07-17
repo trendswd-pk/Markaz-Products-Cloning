@@ -5,6 +5,18 @@ Documentation language: **English** throughout the `Documentation/` folder.
 
 ---
 
+## 2026-07-17
+
+### Shopify status 429 / false "Not on Shopify"
+- Root cause: Tracked Products fetched **one Shopify API call per product** on load, exceeding Shopify's **2 calls/second** limit. Failures were shown as "Not on Shopify".
+- Added client-side throttling (~0.55s between calls) + automatic **429 retry** with `Retry-After`.
+- Status refresh now **bulk-loads by `shopify_product_id`** (`products.json?ids=...`, ~50 per request).
+- Opening Tracked Products no longer hits Shopify for every row — shows **Shopify: Linked** from saved handle/ID until you click **Refresh Shopify Status**.
+- On rate-limit failure, previous successful status is kept (or Linked) instead of "Not on Shopify".
+- Successful live lookups save missing `shopify_product_id` back to Supabase for faster future bulk refresh.
+
+---
+
 ## 2026-07-16
 
 ### Supabase — fewer API calls (RPC + session cache)
