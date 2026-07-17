@@ -141,6 +141,163 @@ def sync_product_images(client, product_id, image_urls, existing_images=None):
     }
 
 
+def _sorted_product_images(images):
+    return sorted(
+        images or [],
+        key=lambda img: (
+            int(img.get('position') or 9999),
+            int(img.get('id') or 0),
+        ),
+    )
+
+
+def assign_variant_images(client, shopify_product, force=False):
+    """Attach product images to variants so Shopify Admin shows a Variant image.
+
+    Strategy:
+    - Always assign the primary (position 1) image to every variant that has no image.
+    - If option looks like Color/Colour and image count >= variant count, also map
+      image[i] → variant[i] (common for color swatches).
+    - Uses image `variant_ids` bulk update when possible (fewer API calls).
+    """
+    if not shopify_product or not shopify_product.get('id'):
+        return {'assigned': 0, 'errors': ['Missing Shopify product']}
+
+    product_id = shopify_product['id']
+    images = _sorted_product_images(shopify_product.get('images'))
+    variants = shopify_product.get('variants') or []
+    if not images or not variants:
+        return {'assigned': 0, 'errors': []}
+
+    options = shopify_product.get('options') or []
+    option1_name = ''
+    if options:
+        option1_name = (options[0].get('name') or '').strip().lower()
+    is_color_option = option1_name in {'color', 'colour', 'colors', 'colours'}
+
+    primary_image = images[0]
+    primary_id = primary_image.get('id')
+    if not primary_id:
+        return {'assigned': 0, 'errors': ['Primary image has no id']}
+
+    # Decide image_id per variant.
+    assignments = {}  # image_id -> [variant_id, ...]
+    for index, variant in enumerate(variants):
+        variant_id = variant.get('id')
+        if not variant_id:
+            continue
+        if variant.get('image_id') and not force:
+            continue
+
+        if is_color_option and index < len(images) and images[index].get('id'):
+            image_id = images[index]['id']
+        else:
+            image_id = primary_id
+
+        assignments.setdefault(image_id, []).append(variant_id)
+
+    if not assignments:
+        return {'assigned': 0, 'errors': [], 'skipped_already_set': True}
+
+    assigned = 0
+    errors = []
+
+    # Prefer attaching via image.variant_ids (1 call per image).
+    for image_id, variant_ids in assignments.items():
+        # Merge with any existing variant_ids already on that image.
+        existing_on_image = []
+        for img in images:
+            if img.get('id') == image_id:
+                existing_on_image = list(img.get('variant_ids') or [])
+                break
+        merged_ids = list(dict.fromkeys([*existing_on_image, *variant_ids]))
+        try:
+            client._request(
+                'PUT',
+                f'products/{product_id}/images/{image_id}.json',
+                json={
+                    'image': {
+                        'id': image_id,
+                        'variant_ids': merged_ids,
+                    }
+                },
+            )
+            assigned += len(variant_ids)
+            continue
+        except Exception as bulk_exc:
+            # Fallback: set image_id on each variant.
+            fallback_ok = False
+            for variant_id in variant_ids:
+                try:
+                    client._request(
+                        'PUT',
+                        f'variants/{variant_id}.json',
+                        json={
+                            'variant': {
+                                'id': variant_id,
+                                'image_id': image_id,
+                            }
+                        },
+                    )
+                    assigned += 1
+                    fallback_ok = True
+                except Exception as variant_exc:
+                    errors.append(f'variant {variant_id}: {variant_exc}'[:160])
+            if not fallback_ok:
+                errors.append(str(bulk_exc)[:160])
+
+    return {
+        'assigned': assigned,
+        'errors': errors,
+        'primary_image_id': primary_id,
+        'color_mapped': is_color_option and len(images) >= len(variants),
+    }
+
+
+def ensure_images_and_variant_images(client, shopify_product, image_urls):
+    """Upload missing product images, then assign images onto variants."""
+    if not shopify_product or not shopify_product.get('id'):
+        return shopify_product, {
+            'added': 0,
+            'skipped': 0,
+            'errors': [],
+            'variants_assigned': 0,
+            'variant_errors': [],
+        }
+
+    product_id = shopify_product['id']
+    image_sync = {'added': 0, 'skipped': 0, 'errors': []}
+    if image_urls:
+        image_sync = sync_product_images(
+            client,
+            product_id,
+            image_urls,
+            existing_images=shopify_product.get('images', []),
+        )
+
+    # Refresh so new image IDs + variant IDs are available.
+    handle = shopify_product.get('handle')
+    refreshed = None
+    if handle:
+        refreshed = client.get_product_by_handle(handle)
+    if not refreshed:
+        try:
+            data = client._request('GET', f'products/{product_id}.json')
+            refreshed = data.get('product') or shopify_product
+        except Exception:
+            refreshed = shopify_product
+
+    variant_sync = assign_variant_images(client, refreshed, force=True)
+    image_sync['variants_assigned'] = variant_sync.get('assigned', 0)
+    image_sync['variant_errors'] = variant_sync.get('errors') or []
+
+    # One more refresh after assignment (optional but keeps counts accurate).
+    if handle:
+        refreshed = client.get_product_by_handle(handle) or refreshed
+
+    return refreshed, image_sync
+
+
 def _pricing_for_product(product):
     original_price = float(product.get('price', 0) or 0)
     variant_adjustment = float(product.get('variant_price_adjustment', 0) or 0)
@@ -230,17 +387,13 @@ def _recover_published_product(client, handle, title, product, exc, action_hint=
 
     image_urls = normalize_product_image_urls(product)
     images_added = 0
-    image_sync = {'added': 0, 'skipped': 0, 'errors': []}
+    image_sync = {'added': 0, 'skipped': 0, 'errors': [], 'variants_assigned': 0, 'variant_errors': []}
     try:
-        if image_urls:
-            image_sync = sync_product_images(
-                client,
-                existing['id'],
-                image_urls,
-                existing_images=existing.get('images', []),
+        if image_urls or (existing.get('images') and existing.get('variants')):
+            existing, image_sync = ensure_images_and_variant_images(
+                client, existing, image_urls,
             )
             images_added = image_sync.get('added', 0) if isinstance(image_sync, dict) else image_sync
-            existing = client.get_product_by_handle(handle) or existing
     except Exception:
         pass
 
@@ -248,6 +401,9 @@ def _recover_published_product(client, handle, title, product, exc, action_hint=
         f'Product {action_hint} on Shopify (request timed out waiting for response, '
         f'but the product exists). Original error: {exc}'
     )
+    variants_assigned = image_sync.get('variants_assigned', 0) if isinstance(image_sync, dict) else 0
+    if variants_assigned:
+        message += f' Variant images assigned: {variants_assigned}.'
     return {
         'success': True,
         'action': action_hint,
@@ -259,6 +415,7 @@ def _recover_published_product(client, handle, title, product, exc, action_hint=
         'variants_count': len(existing.get('variants', [])),
         'images_count': len(existing.get('images', [])),
         'images_added': images_added,
+        'variants_images_assigned': variants_assigned,
         'product_status': existing.get('status'),
         'message': message,
         'timeout_recovered': True,
@@ -300,16 +457,18 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
             )
             images_added = 0
             image_errors = []
-            if image_urls:
-                image_sync = sync_product_images(
-                    client,
-                    existing['id'],
-                    image_urls,
-                    existing_images=existing.get('images', []),
+            variants_assigned = 0
+            if image_urls or existing.get('images'):
+                refreshed, image_sync = ensure_images_and_variant_images(
+                    client, existing, image_urls,
                 )
                 images_added = image_sync.get('added', 0)
-                image_errors = image_sync.get('errors') or []
-            refreshed = client.get_product_by_handle(handle) or existing
+                image_errors = (image_sync.get('errors') or []) + (
+                    image_sync.get('variant_errors') or []
+                )
+                variants_assigned = image_sync.get('variants_assigned', 0)
+            else:
+                refreshed = existing
             message = 'Product updated; details refreshed and missing images added.'
             if sync_result:
                 message = 'Product updated; details refreshed, stock synced, and missing images added.'
@@ -318,6 +477,8 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
                     'Product updated and images synced, but inventory was not updated '
                     f'(needs `read_locations` scope): {stock_sync_warning}'
                 )
+            if variants_assigned:
+                message += f' Variant images set: {variants_assigned}.'
             if image_errors:
                 message += f' Some images failed ({len(image_errors)}).'
             result = {
@@ -330,6 +491,7 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
                 'stock_status': stock_status,
                 'images_count': len(refreshed.get('images', [])),
                 'images_added': images_added,
+                'variants_images_assigned': variants_assigned,
                 'message': message,
             }
             if stock_sync_warning:
@@ -338,7 +500,8 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
                 result.update({k: v for k, v in sync_result.items() if k != 'success'})
             return result
 
-        # Create without embedded images first (fast response), then attach images.
+        # Create without embedded images first (fast response), then attach images
+        # and assign them onto variants.
         payload = build_shopify_product_payload(product, handle, include_images=False)
         try:
             data = client._request(
@@ -360,18 +523,19 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
         images_count = len(created.get('images', []))
         images_added = 0
         image_errors = []
+        variants_assigned = 0
 
-        if product_id and image_urls:
-            image_sync = sync_product_images(
-                client,
-                product_id,
-                image_urls,
-                existing_images=created.get('images', []),
+        if product_id and (image_urls or created.get('variants')):
+            refreshed, image_sync = ensure_images_and_variant_images(
+                client, created, image_urls,
             )
             images_added = image_sync.get('added', 0)
-            image_errors = image_sync.get('errors') or []
-            refreshed = client.get_product_by_handle(handle) or created
+            image_errors = (image_sync.get('errors') or []) + (
+                image_sync.get('variant_errors') or []
+            )
+            variants_assigned = image_sync.get('variants_assigned', 0)
             images_count = len(refreshed.get('images', []))
+            created = refreshed or created
 
         result = {
             'success': True,
@@ -384,13 +548,17 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
             'variants_count': len(created.get('variants', [])),
             'images_count': images_count,
             'images_added': images_added,
+            'variants_images_assigned': variants_assigned,
             'product_status': payload.get('status'),
         }
+        notes = []
+        if variants_assigned:
+            notes.append(f'Variant images set: {variants_assigned}.')
         if image_errors:
-            result['message'] = (
-                f'Product created, but {len(image_errors)} image(s) failed to upload.'
-            )
+            notes.append(f'{len(image_errors)} image(s) failed to upload/assign.')
             result['image_sync_errors'] = image_errors
+        if notes:
+            result['message'] = 'Product created. ' + ' '.join(notes)
         return result
     except ShopifyAPIError as exc:
         recovered = _recover_published_product(

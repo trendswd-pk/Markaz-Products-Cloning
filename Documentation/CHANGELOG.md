@@ -7,6 +7,12 @@ Documentation language: **English** throughout the `Documentation/` folder.
 
 ## 2026-07-17
 
+### Variant images on Shopify publish
+- After product images upload, the app now **assigns images to variants** (Shopify Variant image).
+- **Size** (and most options): primary gallery image is linked to **all** variants in one API call.
+- **Color/Colour** options: if there are at least as many images as variants, image `i` maps to variant `i`.
+- Applies on create, update, and timeout-recovery publish paths — no more manual variant image picking in Admin for new publishes.
+
 ### Shopify status 429 / false "Not on Shopify"
 - Root cause: Tracked Products fetched **one Shopify API call per product** on load, exceeding Shopify's **2 calls/second** limit. Failures were shown as "Not on Shopify".
 - Added client-side throttling (~0.55s between calls) + automatic **429 retry** with `Retry-After`.
