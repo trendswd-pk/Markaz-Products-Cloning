@@ -1,3 +1,4 @@
+import json
 import os
 import re
 from html import escape
@@ -10,6 +11,27 @@ from shopify_config import is_shopify_configured
 from shopify_sync import DEFAULT_IN_STOCK_QTY, ShopifyAPIError, get_shopify_client
 
 VENDOR_NAME = 'at One Spot'
+DEFAULT_VARIANT_GRAMS = 750
+
+# Shopify standard product list metafields (CSV + API publish defaults)
+SHOPIFY_LIST_METAFIELD_TYPE = 'list.single_line_text_field'
+AGE_GROUP_METAFIELD = {
+    'namespace': 'shopify',
+    'key': 'age-group',
+    'values': ['all-ages', 'adults'],
+    'csv_value': 'all-ages; adults',
+    'csv_column': 'Age group (product.metafields.shopify.age-group)',
+    'label': 'Age group',
+}
+TARGET_GENDER_METAFIELD = {
+    'namespace': 'shopify',
+    'key': 'target-gender',
+    'values': ['female', 'male', 'unisex'],
+    'csv_value': 'female; male; unisex',
+    'csv_column': 'Target gender (product.metafields.shopify.target-gender)',
+    'label': 'Target gender',
+}
+DEFAULT_PRODUCT_METAFIELDS = (AGE_GROUP_METAFIELD, TARGET_GENDER_METAFIELD)
 
 
 def _block_demo_shopify_api(action='publish to Shopify'):
@@ -92,6 +114,93 @@ def _product_tags_and_type(product):
     if cleaned:
         product_type = re.sub(r'[^a-zA-Z0-9\s-]', '', cleaned[-1]).strip()
     return tags, product_type
+
+
+def set_product_list_metafield(client, product_id, metafield_spec):
+    """Set a Shopify list.single_line_text_field product metafield."""
+    if not product_id:
+        return False, 'Missing product id'
+
+    namespace = metafield_spec['namespace']
+    key = metafield_spec['key']
+    value_json = json.dumps(metafield_spec['values'])
+    csv_value = metafield_spec['csv_value']
+    payload = {
+        'metafield': {
+            'namespace': namespace,
+            'key': key,
+            'type': SHOPIFY_LIST_METAFIELD_TYPE,
+            'value': value_json,
+        }
+    }
+
+    try:
+        listed = client._request(
+            'GET',
+            f'products/{product_id}/metafields.json',
+            params={'namespace': namespace, 'key': key},
+        )
+        existing = (listed.get('metafields') or [None])[0]
+        if existing and existing.get('id'):
+            client._request(
+                'PUT',
+                f'metafields/{existing["id"]}.json',
+                json={
+                    'metafield': {
+                        'id': existing['id'],
+                        'type': SHOPIFY_LIST_METAFIELD_TYPE,
+                        'value': value_json,
+                    }
+                },
+            )
+            return True, None
+
+        client._request(
+            'POST',
+            f'products/{product_id}/metafields.json',
+            json=payload,
+        )
+        return True, None
+    except Exception as exc:
+        try:
+            client._request(
+                'POST',
+                f'products/{product_id}/metafields.json',
+                json={
+                    'metafield': {
+                        'namespace': namespace,
+                        'key': key,
+                        'type': 'single_line_text_field',
+                        'value': csv_value,
+                    }
+                },
+            )
+            return True, None
+        except Exception:
+            return False, str(exc)[:200]
+
+
+def set_product_age_group_metafield(client, product_id):
+    """Set product.metafields.shopify.age-group = all-ages; adults."""
+    return set_product_list_metafield(client, product_id, AGE_GROUP_METAFIELD)
+
+
+def set_product_target_gender_metafield(client, product_id):
+    """Set product.metafields.shopify.target-gender = female; male; unisex."""
+    return set_product_list_metafield(client, product_id, TARGET_GENDER_METAFIELD)
+
+
+def apply_default_product_metafields(client, product_id):
+    """Apply Age group + Target gender defaults. Returns short status notes."""
+    notes = []
+    for spec in DEFAULT_PRODUCT_METAFIELDS:
+        ok, err = set_product_list_metafield(client, product_id, spec)
+        label = spec.get('label') or spec['key']
+        if ok:
+            notes.append(f'{label} set ({spec["csv_value"]}).')
+        elif err:
+            notes.append(f'{label} metafield skipped: {err}')
+    return notes
 
 
 def normalize_product_image_urls(product):
@@ -315,6 +424,88 @@ def _pricing_for_product(product):
     }
 
 
+def update_existing_product_variants(client, product, shopify_product):
+    """Push default grams, prices, and SKUs onto already-published Shopify variants."""
+    if not shopify_product or not shopify_product.get('id'):
+        return {'updated': 0, 'errors': []}
+
+    pricing = _pricing_for_product(product)
+    base_sku = (product.get('base_sku') or '').strip()
+    markaz_variants = product.get('variants') or []
+    markaz_by_option = {
+        str(value).strip().lower(): value
+        for value in markaz_variants
+        if value
+    }
+
+    variant_payloads = []
+    for shopify_variant in shopify_product.get('variants') or []:
+        variant_id = shopify_variant.get('id')
+        if not variant_id:
+            continue
+
+        option1 = (shopify_variant.get('option1') or '').strip()
+        option_key = option1.lower()
+        if option_key in markaz_by_option:
+            variant_value = markaz_by_option[option_key]
+        else:
+            variant_value = option1
+
+        if variant_value and base_sku and variant_value != 'Default Title':
+            variant_sku = f'{base_sku}-{variant_value}'
+        else:
+            variant_sku = base_sku or shopify_variant.get('sku') or ''
+
+        variant_payloads.append({
+            'id': variant_id,
+            'price': f'{pricing["variant_price"]:.2f}',
+            'compare_at_price': f'{pricing["compare_at_price"]:.2f}',
+            'sku': variant_sku,
+            'grams': DEFAULT_VARIANT_GRAMS,
+            'weight': DEFAULT_VARIANT_GRAMS / 1000.0,
+            'weight_unit': 'kg',
+            'inventory_policy': 'continue',
+            'fulfillment_service': 'manual',
+            'requires_shipping': True,
+            'taxable': True,
+        })
+
+    if not variant_payloads:
+        return {'updated': 0, 'errors': []}
+
+    errors = []
+    updated = 0
+    # Prefer one product-level PUT (fewer calls) with all variant ids.
+    try:
+        client._request(
+            'PUT',
+            f'products/{shopify_product["id"]}.json',
+            json={
+                'product': {
+                    'id': shopify_product['id'],
+                    'variants': variant_payloads,
+                }
+            },
+        )
+        return {'updated': len(variant_payloads), 'errors': []}
+    except Exception:
+        pass
+
+    # Fallback: update variants one-by-one.
+    for variant_payload in variant_payloads:
+        try:
+            client._request(
+                'PUT',
+                f'variants/{variant_payload["id"]}.json',
+                json={'variant': variant_payload},
+            )
+            updated += 1
+        except Exception as exc:
+            errors.append(f'variant {variant_payload["id"]}: {exc}'[:160])
+
+    return {'updated': updated, 'errors': errors}
+
+
 def build_shopify_product_payload(product, handle, include_images=False):
     variants = product.get('variants') or ['Default Title']
     option1_name = product.get('option1_name') or 'Title'
@@ -340,6 +531,7 @@ def build_shopify_product_payload(product, handle, include_images=False):
             'price': f'{pricing["variant_price"]:.2f}',
             'compare_at_price': f'{pricing["compare_at_price"]:.2f}',
             'sku': variant_sku,
+            'grams': DEFAULT_VARIANT_GRAMS,
             'inventory_management': 'shopify',
             'inventory_quantity': inventory_qty,
             'inventory_policy': 'continue',
@@ -404,6 +596,11 @@ def _recover_published_product(client, handle, title, product, exc, action_hint=
     variants_assigned = image_sync.get('variants_assigned', 0) if isinstance(image_sync, dict) else 0
     if variants_assigned:
         message += f' Variant images assigned: {variants_assigned}.'
+    try:
+        for note in apply_default_product_metafields(client, existing.get('id')):
+            message += f' {note}'
+    except Exception:
+        pass
     return {
         'success': True,
         'action': action_hint,
@@ -440,6 +637,7 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
             stock_status = product.get('stock_status', 'in_stock')
             product_status = 'active' if stock_status != 'out_of_stock' else 'draft'
             sync_result, stock_sync_warning = client.try_sync_stock_for_handle(handle, stock_status)
+            tags, product_type = _product_tags_and_type(product)
             client._request(
                 'PUT',
                 f'products/{existing["id"]}.json',
@@ -449,12 +647,18 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
                         'title': product.get('title') or existing.get('title'),
                         'body_html': convert_description_to_html(product.get('description', '')),
                         'vendor': VENDOR_NAME,
-                        'tags': _product_tags_and_type(product)[0],
-                        'product_type': _product_tags_and_type(product)[1],
+                        'tags': tags,
+                        'product_type': product_type,
                         'status': product_status,
                     }
                 },
             )
+
+            # Push grams (750), prices, SKUs onto existing variants.
+            variant_sync = update_existing_product_variants(client, product, existing)
+            # Refresh after variant update so image assignment sees current state.
+            existing = client.get_product_by_handle(handle) or existing
+
             images_added = 0
             image_errors = []
             variants_assigned = 0
@@ -469,18 +673,31 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
                 variants_assigned = image_sync.get('variants_assigned', 0)
             else:
                 refreshed = existing
-            message = 'Product updated; details refreshed and missing images added.'
+
+            message = (
+                'Product updated on Shopify: details, Type, Variant Grams (750), '
+                'prices, images, variant images, Age group, and Target gender.'
+            )
             if sync_result:
-                message = 'Product updated; details refreshed, stock synced, and missing images added.'
+                message = (
+                    'Product updated; stock synced; Type/grams/prices/images/'
+                    'metafields refreshed.'
+                )
             elif stock_sync_warning:
                 message = (
-                    'Product updated and images synced, but inventory was not updated '
-                    f'(needs `read_locations` scope): {stock_sync_warning}'
+                    'Product updated (details/grams/images/metafields), but inventory '
+                    f'was not updated (needs `read_locations` scope): {stock_sync_warning}'
                 )
+            if variant_sync.get('updated'):
+                message += f' Variants updated: {variant_sync["updated"]}.'
             if variants_assigned:
                 message += f' Variant images set: {variants_assigned}.'
             if image_errors:
                 message += f' Some images failed ({len(image_errors)}).'
+            if variant_sync.get('errors'):
+                message += f' Some variant updates failed ({len(variant_sync["errors"])}).'
+            for note in apply_default_product_metafields(client, existing['id']):
+                message += f' {note}'
             result = {
                 'success': True,
                 'action': 'updated',
@@ -492,6 +709,7 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
                 'images_count': len(refreshed.get('images', [])),
                 'images_added': images_added,
                 'variants_images_assigned': variants_assigned,
+                'variants_updated': variant_sync.get('updated', 0),
                 'message': message,
             }
             if stock_sync_warning:
@@ -537,6 +755,17 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
             images_count = len(refreshed.get('images', []))
             created = refreshed or created
 
+        metafield_notes = apply_default_product_metafields(client, product_id)
+        notes = []
+        if variants_assigned:
+            notes.append(f'Variant images set: {variants_assigned}.')
+        notes.extend(metafield_notes)
+        if image_errors:
+            notes.append(f'{len(image_errors)} image(s) failed to upload/assign.')
+            result_errors = image_errors
+        else:
+            result_errors = []
+
         result = {
             'success': True,
             'action': 'created',
@@ -551,12 +780,8 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
             'variants_images_assigned': variants_assigned,
             'product_status': payload.get('status'),
         }
-        notes = []
-        if variants_assigned:
-            notes.append(f'Variant images set: {variants_assigned}.')
-        if image_errors:
-            notes.append(f'{len(image_errors)} image(s) failed to upload/assign.')
-            result['image_sync_errors'] = image_errors
+        if result_errors:
+            result['image_sync_errors'] = result_errors
         if notes:
             result['message'] = 'Product created. ' + ' '.join(notes)
         return result

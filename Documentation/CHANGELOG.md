@@ -7,6 +7,19 @@ Documentation language: **English** throughout the `Documentation/` folder.
 
 ## 2026-07-18
 
+### Tracked Products — republish updates existing Shopify products
+- **Publish Shopify** / bulk publish on an already-linked product now **updates** the Shopify product (not create-only).
+- Update push includes: title, description, vendor, tags, **Type**, stock status, **Variant Grams (750)**, prices/SKUs, images + variant images, **Age group**, **Target gender**.
+
+### CSV / publish defaults
+- **Variant Grams** default is **750** (CSV + direct Shopify publish).
+- CSV **Type** column (was Standard Product Type); unused Custom Product Type removed.
+- **Variant Image** (CSV): set to **Image Src position 1** URL for every variant row.
+- **Age group** metafield default: `all-ages; adults`
+  (`Age group (product.metafields.shopify.age-group)` in CSV; API sets `shopify.age-group` on publish).
+- **Target gender** metafield default: `female; male; unisex`
+  (`Target gender (product.metafields.shopify.target-gender)` in CSV; API sets `shopify.target-gender` on publish).
+
 ### Tracked Products — no duplicate Markaz links
 - Markaz URLs are **canonicalized** (`https://www.markaz.app/...`, no trailing junk).
 - Upsert matches by **numeric Markaz product id** (URL tail), not only exact URL string — so different slugs for the same product update one row.

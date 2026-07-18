@@ -83,9 +83,10 @@ Examples:
 
 1. Click **Publish Shopify**
 2. Fetches fresh Markaz data for this URL
-3. Creates or updates product on Shopify
-4. Updates `shopify_handle` and `shopify_product_id` in Supabase
-5. Publish feedback shown at dashboard top
+3. Creates or **updates** the product on Shopify (matched by handle)
+4. On update, pushes: title, description, vendor, tags, Type, Variant Grams **750**, prices/SKUs, images + variant images, Age group, Target gender, and stock when scopes allow
+5. Updates `shopify_handle` and `shopify_product_id` in Supabase
+6. Publish feedback shown at dashboard top
 
 ---
 

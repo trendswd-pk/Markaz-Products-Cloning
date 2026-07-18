@@ -251,9 +251,9 @@ def create_shopify_row(product, variant_value="", image_url="", image_position="
     option1_name = product.get('option1_name', 'Title') if is_variant_row else ''
     option1_value = variant_value if is_variant_row else ''
     
-    # Extract breadcrumb data for Standard Product Type and Tags
+    # Extract breadcrumb data for Type and Tags
     breadcrumb_items = product.get('breadcrumb_items', [])
-    standard_product_type = ''
+    product_type_value = ''
     tags = ''
     
     if breadcrumb_items:
@@ -273,14 +273,22 @@ def create_shopify_row(product, variant_value="", image_url="", image_position="
         else:
             tags = ''
         
-        # Standard Product Type: Set this to the last item of this cleaned list (e.g., 'Personal Care')
+        # Type: last breadcrumb item (Shopify CSV column is "Type")
         if breadcrumb_items:
-            # Last item of the cleaned list
             product_type = breadcrumb_items[-1].strip()
-            # Remove special characters except spaces and hyphens
-            standard_product_type = re.sub(r'[^a-zA-Z0-9\s-]', '', product_type).strip()
+            product_type_value = re.sub(r'[^a-zA-Z0-9\s-]', '', product_type).strip()
         else:
-            standard_product_type = ''
+            product_type_value = ''
+    
+    # Variant Image = Image Src at Position 1 (all variants share primary gallery image)
+    image_urls = product.get('image_urls') or []
+    primary_image_url = ''
+    if image_urls:
+        try:
+            from markaz_scraper import normalize_markaz_image_url
+            primary_image_url = normalize_markaz_image_url(image_urls[0]) or image_urls[0]
+        except Exception:
+            primary_image_url = image_urls[0]
     
     # Create row with all columns in exact order
     row = {
@@ -288,8 +296,7 @@ def create_shopify_row(product, variant_value="", image_url="", image_position="
         'Title': title,
         'Body (HTML)': body_html,
         'Vendor': 'at One Spot' if is_first_variant else '',
-        'Standard Product Type': standard_product_type if is_first_variant else '',
-        'Custom Product Type': '',
+        'Type': product_type_value if is_first_variant else '',
         'Tags': tags if is_first_variant else '',
         'Published': 'TRUE' if is_first_variant else '',
         'Option1 Name': option1_name,
@@ -299,7 +306,7 @@ def create_shopify_row(product, variant_value="", image_url="", image_position="
         'Option3 Name': '',
         'Option3 Value': '',
         'Variant SKU': variant_sku,
-        'Variant Grams': '',
+        'Variant Grams': '750' if is_variant_row else '',
         'Variant Inventory Tracker': 'shopify' if is_variant_row else '',
         'Variant Inventory Qty': '50' if is_variant_row else '',
         'Variant Inventory Policy': 'continue' if is_variant_row else '',
@@ -312,12 +319,13 @@ def create_shopify_row(product, variant_value="", image_url="", image_position="
         'Image Src': image_url,
         'Image Position': image_position if image_position else '',
         'Image Alt Text': title if is_first_variant and image_url else '',
+        'Variant Image': primary_image_url if is_variant_row else '',
         'Gift Card': 'FALSE' if is_first_variant else '',
         'SEO Title': title if is_first_variant else '',
         'SEO Description': product['description'][:160] if is_first_variant and product.get('description') else '',
         'Google Shopping / Google Product Category': '',
-        'Google Shopping / Gender': '',
-        'Google Shopping / Age Group': '',
+        'Google Shopping / Gender': 'unisex' if is_first_variant else '',
+        'Google Shopping / Age Group': 'adult' if is_first_variant else '',
         'Google Shopping / MPN': '',
         'Google Shopping / Condition': 'new' if is_first_variant else '',
         'Google Shopping / Custom Product': 'FALSE' if is_first_variant else '',
@@ -326,6 +334,8 @@ def create_shopify_row(product, variant_value="", image_url="", image_position="
         'Google Shopping / Custom Label 2': '',
         'Google Shopping / Custom Label 3': '',
         'Google Shopping / Custom Label 4': '',
+        'Age group (product.metafields.shopify.age-group)': 'all-ages; adults' if is_first_variant else '',
+        'Target gender (product.metafields.shopify.target-gender)': 'female; male; unisex' if is_first_variant else '',
         'Variant Weight Unit': 'kg' if is_variant_row else '',
         'Variant Tax Code': '',
         'Cost per item': cost_per_item,
@@ -2238,18 +2248,21 @@ def render_converter_tab():
         
         # Define exact column order as required by Shopify
         column_order = [
-            'Handle', 'Title', 'Body (HTML)', 'Vendor', 'Standard Product Type', 'Custom Product Type',
+            'Handle', 'Title', 'Body (HTML)', 'Vendor', 'Type',
             'Tags', 'Published', 'Option1 Name', 'Option1 Value', 'Option2 Name', 'Option2 Value',
             'Option3 Name', 'Option3 Value', 'Variant SKU', 'Variant Grams', 'Variant Inventory Tracker',
             'Variant Inventory Qty', 'Variant Inventory Policy', 'Variant Fulfillment Service',
             'Variant Price', 'Variant Compare At Price', 'Variant Requires Shipping', 'Variant Taxable',
-            'Variant Barcode', 'Image Src', 'Image Position', 'Image Alt Text', 'Gift Card',
+            'Variant Barcode', 'Image Src', 'Image Position', 'Image Alt Text', 'Variant Image', 'Gift Card',
             'SEO Title', 'SEO Description', 'Google Shopping / Google Product Category',
             'Google Shopping / Gender', 'Google Shopping / Age Group', 'Google Shopping / MPN',
             'Google Shopping / Condition', 'Google Shopping / Custom Product',
             'Google Shopping / Custom Label 0', 'Google Shopping / Custom Label 1',
             'Google Shopping / Custom Label 2', 'Google Shopping / Custom Label 3',
-            'Google Shopping / Custom Label 4', 'Variant Weight Unit', 'Variant Tax Code',
+            'Google Shopping / Custom Label 4',
+            'Age group (product.metafields.shopify.age-group)',
+            'Target gender (product.metafields.shopify.target-gender)',
+            'Variant Weight Unit', 'Variant Tax Code',
             'Cost per item', 'Price / International', 'Compare At Price / International', 'Status'
         ]
         
