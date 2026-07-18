@@ -296,6 +296,7 @@ def create_shopify_row(product, variant_value="", image_url="", image_position="
         'Title': title,
         'Body (HTML)': body_html,
         'Vendor': 'at One Spot' if is_first_variant else '',
+        'Product Category': 'Apparel & Accessories' if is_first_variant else '',
         'Type': product_type_value if is_first_variant else '',
         'Tags': tags if is_first_variant else '',
         'Published': 'TRUE' if is_first_variant else '',
@@ -2248,7 +2249,7 @@ def render_converter_tab():
         
         # Define exact column order as required by Shopify
         column_order = [
-            'Handle', 'Title', 'Body (HTML)', 'Vendor', 'Type',
+            'Handle', 'Title', 'Body (HTML)', 'Vendor', 'Product Category', 'Type',
             'Tags', 'Published', 'Option1 Name', 'Option1 Value', 'Option2 Name', 'Option2 Value',
             'Option3 Name', 'Option3 Value', 'Variant SKU', 'Variant Grams', 'Variant Inventory Tracker',
             'Variant Inventory Qty', 'Variant Inventory Policy', 'Variant Fulfillment Service',

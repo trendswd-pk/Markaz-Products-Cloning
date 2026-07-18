@@ -12,6 +12,9 @@ from shopify_sync import DEFAULT_IN_STOCK_QTY, ShopifyAPIError, get_shopify_clie
 
 VENDOR_NAME = 'at One Spot'
 DEFAULT_VARIANT_GRAMS = 750
+# Temporary default — change later in Shopify Admin per product type (e.g. cosmetics).
+DEFAULT_PRODUCT_CATEGORY = 'Apparel & Accessories'
+DEFAULT_PRODUCT_CATEGORY_GID = 'gid://shopify/TaxonomyCategory/aa'
 
 # Shopify standard product list metafields (CSV + API publish defaults)
 SHOPIFY_LIST_METAFIELD_TYPE = 'list.single_line_text_field'
@@ -201,6 +204,58 @@ def apply_default_product_metafields(client, product_id):
         elif err:
             notes.append(f'{label} metafield skipped: {err}')
     return notes
+
+
+def set_default_product_category(client, product_id):
+    """Set Shopify Product Category via GraphQL (REST does not support taxonomy)."""
+    if not product_id:
+        return False, 'Missing product id'
+    gid = f'gid://shopify/Product/{product_id}'
+    mutation = """
+    mutation SetProductCategory($input: ProductInput!) {
+      productUpdate(input: $input) {
+        product {
+          id
+          category {
+            id
+            name
+          }
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+    """
+    try:
+        data = client.graphql(
+            mutation,
+            {
+                'input': {
+                    'id': gid,
+                    'category': DEFAULT_PRODUCT_CATEGORY_GID,
+                }
+            },
+        )
+        payload = (data or {}).get('productUpdate') or {}
+        errors = payload.get('userErrors') or []
+        if errors:
+            msg = '; '.join(e.get('message', str(e)) for e in errors)
+            return False, msg[:160]
+        category = ((payload.get('product') or {}).get('category') or {})
+        name = category.get('name') or DEFAULT_PRODUCT_CATEGORY
+        return True, name
+    except Exception as exc:
+        return False, str(exc)[:160]
+
+
+def apply_default_product_category(client, product_id):
+    """Apply default Product Category. Returns a short status note or None."""
+    ok, detail = set_default_product_category(client, product_id)
+    if ok:
+        return f'Product Category set ({detail}).'
+    return f'Product Category skipped: {detail}'
 
 
 def normalize_product_image_urls(product):
@@ -597,6 +652,9 @@ def _recover_published_product(client, handle, title, product, exc, action_hint=
     if variants_assigned:
         message += f' Variant images assigned: {variants_assigned}.'
     try:
+        category_note = apply_default_product_category(client, existing.get('id'))
+        if category_note:
+            message += f' {category_note}'
         for note in apply_default_product_metafields(client, existing.get('id')):
             message += f' {note}'
     except Exception:
@@ -696,6 +754,9 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
                 message += f' Some images failed ({len(image_errors)}).'
             if variant_sync.get('errors'):
                 message += f' Some variant updates failed ({len(variant_sync["errors"])}).'
+            category_note = apply_default_product_category(client, existing['id'])
+            if category_note:
+                message += f' {category_note}'
             for note in apply_default_product_metafields(client, existing['id']):
                 message += f' {note}'
             result = {
@@ -756,9 +817,12 @@ def publish_product_to_shopify(product, client=None, fallback_index=0):
             created = refreshed or created
 
         metafield_notes = apply_default_product_metafields(client, product_id)
+        category_note = apply_default_product_category(client, product_id)
         notes = []
         if variants_assigned:
             notes.append(f'Variant images set: {variants_assigned}.')
+        if category_note:
+            notes.append(category_note)
         notes.extend(metafield_notes)
         if image_errors:
             notes.append(f'{len(image_errors)} image(s) failed to upload/assign.')

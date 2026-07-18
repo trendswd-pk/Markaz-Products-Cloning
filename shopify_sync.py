@@ -110,6 +110,54 @@ class ShopifyClient:
             status_code=429,
         )
 
+    def graphql(self, query, variables=None, timeout=None):
+        """Run a GraphQL Admin API call (needed for Product Category taxonomy)."""
+        _block_demo_shopify_api('call Shopify GraphQL API')
+        last_error = None
+        payload = {'query': query, 'variables': variables or {}}
+
+        for attempt in range(SHOPIFY_MAX_RETRIES):
+            _throttle_shopify_request()
+            response = self.session.post(
+                f'https://{self.store_url}/admin/api/{self.api_version}/graphql.json',
+                json=payload,
+                timeout=timeout if timeout is not None else DEFAULT_REQUEST_TIMEOUT,
+            )
+
+            if response.status_code == 429:
+                retry_after = response.headers.get('Retry-After')
+                try:
+                    sleep_s = float(retry_after) if retry_after else (1.0 * (attempt + 1))
+                except ValueError:
+                    sleep_s = 1.0 * (attempt + 1)
+                sleep_s = max(sleep_s, 1.0)
+                last_error = ShopifyAPIError(
+                    f'Shopify GraphQL 429: {response.text[:300]}',
+                    status_code=429,
+                    retry_after=sleep_s,
+                )
+                time.sleep(sleep_s)
+                continue
+
+            if not response.ok:
+                raise ShopifyAPIError(
+                    f'Shopify GraphQL {response.status_code}: {response.text[:300]}',
+                    status_code=response.status_code,
+                )
+
+            data = response.json() if response.text else {}
+            if data.get('errors'):
+                messages = '; '.join(
+                    err.get('message', str(err)) for err in data['errors']
+                )
+                raise ShopifyAPIError(f'Shopify GraphQL errors: {messages[:300]}')
+            return data.get('data') or {}
+
+        raise last_error or ShopifyAPIError(
+            'Shopify GraphQL rate limit exceeded after retries.',
+            status_code=429,
+        )
+
     def test_connection(self):
         data = self._request('GET', 'shop.json')
         shop = data.get('shop', {})

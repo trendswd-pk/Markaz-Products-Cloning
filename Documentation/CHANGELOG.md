@@ -7,9 +7,13 @@ Documentation language: **English** throughout the `Documentation/` folder.
 
 ## 2026-07-18
 
+### Product Category default
+- Default **Product Category** is **Apparel & Accessories** (CSV column + GraphQL on direct publish/update).
+- Temporary clothing default — change later in Shopify Admin for cosmetics / other types.
+
 ### Tracked Products — republish updates existing Shopify products
 - **Publish Shopify** / bulk publish on an already-linked product now **updates** the Shopify product (not create-only).
-- Update push includes: title, description, vendor, tags, **Type**, stock status, **Variant Grams (750)**, prices/SKUs, images + variant images, **Age group**, **Target gender**.
+- Update push includes: title, description, vendor, tags, **Type**, stock status, **Variant Grams (750)**, prices/SKUs, images + variant images, **Age group**, **Target gender**, **Product Category**.
 
 ### CSV / publish defaults
 - **Variant Grams** default is **750** (CSV + direct Shopify publish).
