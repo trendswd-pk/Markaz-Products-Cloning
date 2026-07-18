@@ -461,9 +461,15 @@ def save_product_to_supabase(product_data):
         return False, str(exc)
 
 
-def update_tracked_product_from_scrape(markaz_url, scraped_data):
-    """Update Supabase row after a live Markaz refresh."""
-    shopify_handle = generate_unique_handle(
+def update_tracked_product_from_scrape(markaz_url, scraped_data, existing_row=None):
+    """Update Supabase row after a live Markaz refresh.
+
+    Keep an existing Shopify handle so we do not break linkage / product ID backfill.
+    """
+    existing_handle = ''
+    if existing_row:
+        existing_handle = (existing_row.get('shopify_handle') or '').strip()
+    shopify_handle = existing_handle or generate_unique_handle(
         scraped_data.get('title', ''),
         scraped_data.get('base_sku', ''),
     )
@@ -543,6 +549,8 @@ def format_stock_status_label(stock_status):
 def format_shopify_status_label(snapshot):
     if not snapshot:
         return 'Not on Shopify'
+    if snapshot.get('needs_shopify_verify'):
+        return 'Shopify: Unverified'
     if snapshot.get('status_unknown') or snapshot.get('rate_limited'):
         return 'Shopify: Linked'
     if not snapshot.get('on_shopify'):
@@ -561,15 +569,24 @@ def format_shopify_status_detail(snapshot):
     if not snapshot:
         return 'Not on Shopify'
 
+    handle = snapshot.get('shopify_handle') or '—'
+
+    if snapshot.get('needs_shopify_verify'):
+        return (
+            f"**Handle saved** · `{handle}` · product ID missing — click "
+            f"**Refresh Shopify Status** to verify on Shopify and save the ID"
+        )
+
     if snapshot.get('status_unknown') or snapshot.get('rate_limited'):
-        handle = snapshot.get('shopify_handle') or '—'
         err = snapshot.get('error') or 'Live status not loaded yet'
+        product_id = snapshot.get('shopify_product_id')
+        id_bit = f' · ID `{product_id}`' if product_id else ' · product ID not saved yet'
         if snapshot.get('rate_limited') or '429' in str(err):
             return (
-                f"**Linked** · handle `{handle}` · live status pending "
+                f"**Linked** · handle `{handle}`{id_bit} · live status pending "
                 f"(Shopify rate limit — click **Refresh Shopify Status** and wait)."
             )
-        return f"**Linked** · handle `{handle}` · {err}"
+        return f"**Linked** · handle `{handle}`{id_bit} · {err}"
 
     if not snapshot.get('on_shopify'):
         if snapshot.get('error'):
@@ -679,20 +696,35 @@ def load_tracked_rows(force_refresh=False):
 
 
 def seed_shopify_status_map_from_rows(tracked_rows):
-    """Provisional status from Supabase fields — no Shopify API calls."""
+    """Provisional status from Supabase fields — no Shopify API calls.
+
+    - Has shopify_product_id → Linked (live Active/Draft pending Refresh)
+    - Has handle only → Unverified (handle predicted at scrape; ID not saved yet)
+    """
     status_map = {}
     for row in tracked_rows or []:
         row_key = row.get('markaz_url') or row.get('id')
         handle = (row.get('shopify_handle') or '').strip()
         product_id = (row.get('shopify_product_id') or '').strip()
-        if handle or product_id:
+        if product_id:
             status_map[row_key] = {
                 'on_shopify': True,
                 'status_unknown': True,
                 'status': None,
                 'shopify_handle': handle or None,
-                'shopify_product_id': product_id or None,
+                'shopify_product_id': product_id,
                 'admin_url': '',
+            }
+        elif handle:
+            status_map[row_key] = {
+                'on_shopify': False,
+                'needs_shopify_verify': True,
+                'status_unknown': True,
+                'status': None,
+                'shopify_handle': handle,
+                'shopify_product_id': None,
+                'admin_url': '',
+                'error': 'Product ID missing — click Refresh Shopify Status to verify',
             }
         else:
             status_map[row_key] = {'on_shopify': False, 'status': None}
@@ -780,6 +812,20 @@ def render_shopify_status_summary(tracked_rows, shopify_status_map):
         f"({active_count} active, {draft_count} draft)."
     )
     if any(
+        (shopify_status_map.get(row.get('markaz_url') or row.get('id')) or {}).get('needs_shopify_verify')
+        for row in tracked_rows
+    ):
+        unverified = sum(
+            1 for row in tracked_rows
+            if (shopify_status_map.get(row.get('markaz_url') or row.get('id')) or {}).get(
+                'needs_shopify_verify'
+            )
+        )
+        st.warning(
+            f"**{unverified}** product(s) have a saved Shopify handle but **no product ID** "
+            "in Supabase. Click **Refresh Shopify Status** to verify on Shopify and backfill IDs."
+        )
+    elif any(
         (shopify_status_map.get(row.get('markaz_url') or row.get('id')) or {}).get('status_unknown')
         for row in tracked_rows
     ):
@@ -1279,12 +1325,33 @@ def render_tracked_products_tab():
 
         rate_limited = sum(
             1 for snap in fresh_map.values()
-            if snap.get('rate_limited') or snap.get('status_unknown')
+            if snap.get('rate_limited') or (
+                snap.get('status_unknown') and not snap.get('needs_shopify_verify')
+            )
         )
-        if rate_limited:
+        still_unverified = sum(
+            1 for snap in fresh_map.values()
+            if snap.get('needs_shopify_verify')
+            or (
+                snap.get('status_unknown')
+                and not snap.get('shopify_product_id')
+                and snap.get('shopify_handle')
+            )
+        )
+        if metadata_batch:
+            st.success(
+                f"Shopify status refreshed. Saved **{len(metadata_batch)}** missing "
+                f"product ID(s) to Supabase."
+            )
+        elif rate_limited:
             st.warning(
                 f"Shopify status refreshed with **{rate_limited}** product(s) still pending "
                 "(rate limit / not fully loaded). Click **Refresh Shopify Status** again after a few seconds."
+            )
+        elif still_unverified:
+            st.warning(
+                f"Shopify status refreshed. **{still_unverified}** handle(s) still not found "
+                "on Shopify (or still pending). Those stay without a product ID."
             )
         else:
             st.success("Shopify status refreshed for tracked products.")
@@ -1298,7 +1365,8 @@ def render_tracked_products_tab():
             progress.progress((index + 1) / len(tracked_rows), text=f"Checking {index + 1} of {len(tracked_rows)}")
             scraped = scrape_markaz_product(row['markaz_url'])
             if scraped.get('status') == 'success':
-                shopify_handle = generate_unique_handle(
+                existing_handle = (row.get('shopify_handle') or '').strip()
+                shopify_handle = existing_handle or generate_unique_handle(
                     scraped.get('title', ''),
                     scraped.get('base_sku', ''),
                 )
@@ -1490,6 +1558,13 @@ def render_tracked_products_tab():
                     st.write("**Shopify Handle:**", row['shopify_handle'])
                 if shopify_snapshot.get('shopify_product_id'):
                     render_shopify_green_field("Shopify Product ID", shopify_snapshot['shopify_product_id'])
+                elif row.get('shopify_product_id'):
+                    render_shopify_green_field("Shopify Product ID", row['shopify_product_id'])
+                elif row.get('shopify_handle') or shopify_snapshot.get('shopify_handle'):
+                    st.caption(
+                        "Shopify Product ID: **not saved** in Supabase yet. "
+                        "Click **Shopify Status** (this card) or **Refresh Shopify Status** to backfill."
+                    )
                 if shopify_snapshot.get('published_at'):
                     st.write("**Published on Shopify:**", shopify_snapshot['published_at'])
                 if shopify_snapshot.get('updated_at'):
@@ -1499,10 +1574,20 @@ def render_tracked_products_tab():
                     st.markdown(f"**Open in Shopify:** [{admin_url}]({admin_url})")
             elif row.get('shopify_handle'):
                 st.write("**Shopify Handle (saved):**", row['shopify_handle'])
+                if not row.get('shopify_product_id'):
+                    st.caption(
+                        "Shopify Product ID is null in Supabase. "
+                        "Click **Shopify Status** to look up by handle and save the ID."
+                    )
                 if shopify_snapshot.get('error') and '429' in str(shopify_snapshot.get('error')):
                     st.caption(
                         "Shopify rate limit hit while checking this product. "
                         "Wait a few seconds, then click **Shopify Status** again."
+                    )
+                elif shopify_snapshot.get('needs_shopify_verify'):
+                    st.caption(
+                        "Handle was saved when the product was tracked (predicted from title/SKU). "
+                        "It is not confirmed on Shopify until you refresh status."
                     )
                 else:
                     st.caption(
@@ -1522,7 +1607,11 @@ def render_tracked_products_tab():
                     with st.spinner("Checking Markaz..."):
                         scraped = scrape_markaz_product(row['markaz_url'])
                     if scraped.get('status') == 'success':
-                        update_tracked_product_from_scrape(row['markaz_url'], scraped)
+                        update_tracked_product_from_scrape(
+                            row['markaz_url'],
+                            scraped,
+                            existing_row=row,
+                        )
                         st.success("Markaz status updated.")
                         st.rerun()
                     else:

@@ -7,7 +7,10 @@ Documentation language: **English** throughout the `Documentation/` folder.
 
 ## 2026-07-18
 
-### Product Category default
+### Tracked Products — handle without product ID
+- Rows with only a predicted **shopify_handle** (no `shopify_product_id`) no longer show as confirmed **Linked**.
+- They show **Shopify: Unverified** until **Refresh Shopify Status** / card **Shopify Status** verifies the product and **backfills the ID** into Supabase.
+- Markaz refresh keeps an existing saved handle (does not overwrite) so linkage is not broken.
 - Default **Product Category** is **Apparel & Accessories** (CSV column + GraphQL on direct publish/update).
 - Temporary clothing default — change later in Shopify Admin for cosmetics / other types.
 
