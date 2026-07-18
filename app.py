@@ -578,7 +578,9 @@ def format_shopify_status_detail(snapshot):
         )
 
     if snapshot.get('status_unknown') or snapshot.get('rate_limited'):
-        err = snapshot.get('error') or 'Live status not loaded yet'
+        err = snapshot.get('error') or (
+            'click **Refresh Shopify Status** to load Active/Draft'
+        )
         product_id = snapshot.get('shopify_product_id')
         id_bit = f' · ID `{product_id}`' if product_id else ' · product ID not saved yet'
         if snapshot.get('rate_limited') or '429' in str(err):
@@ -586,6 +588,8 @@ def format_shopify_status_detail(snapshot):
                 f"**Linked** · handle `{handle}`{id_bit} · live status pending "
                 f"(Shopify rate limit — click **Refresh Shopify Status** and wait)."
             )
+        if err == 'Live status not loaded yet':
+            err = 'click **Refresh Shopify Status** to load Active/Draft'
         return f"**Linked** · handle `{handle}`{id_bit} · {err}"
 
     if not snapshot.get('on_shopify'):

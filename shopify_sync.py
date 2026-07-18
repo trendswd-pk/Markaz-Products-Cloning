@@ -14,6 +14,11 @@ DEFAULT_REQUEST_TIMEOUT = (15, 120)
 SHOPIFY_MIN_REQUEST_INTERVAL = 0.55
 SHOPIFY_MAX_RETRIES = 5
 SHOPIFY_IDS_CHUNK_SIZE = 50
+# Include draft/archived — default list filters can hide unpublished products.
+SHOPIFY_PRODUCT_LIST_PARAMS = {
+    'status': 'active,draft,archived',
+    'published_status': 'any',
+}
 
 _RATE_LOCK = threading.Lock()
 _LAST_REQUEST_AT = 0.0
@@ -181,7 +186,14 @@ class ShopifyClient:
         return self._location_id
 
     def get_product_by_handle(self, handle):
-        data = self._request('GET', 'products.json', params={'handle': handle})
+        data = self._request(
+            'GET',
+            'products.json',
+            params={
+                'handle': handle,
+                **SHOPIFY_PRODUCT_LIST_PARAMS,
+            },
+        )
         products = data.get('products', [])
         return products[0] if products else None
 
@@ -290,7 +302,11 @@ class ShopifyClient:
         }
 
     def get_products_by_ids(self, product_ids):
-        """Fetch many products in few requests: GET products.json?ids=..."""
+        """Fetch many products in few requests: GET products.json?ids=...
+
+        Includes draft/archived. Any IDs missing from the list response are
+        fetched individually via GET products/{id}.json (always returns drafts).
+        """
         ids = []
         seen = set()
         for raw in product_ids or []:
@@ -306,10 +322,28 @@ class ShopifyClient:
             data = self._request(
                 'GET',
                 'products.json',
-                params={'ids': ','.join(chunk), 'limit': len(chunk)},
+                params={
+                    'ids': ','.join(chunk),
+                    'limit': len(chunk),
+                    **SHOPIFY_PRODUCT_LIST_PARAMS,
+                },
             )
             for product in data.get('products', []) or []:
                 products_by_id[str(product.get('id'))] = product
+
+        # List endpoints can still omit drafts in some API/app setups.
+        missing_ids = [pid for pid in ids if pid not in products_by_id]
+        for pid in missing_ids:
+            try:
+                data = self._request('GET', f'products/{pid}.json')
+                product = data.get('product')
+                if product and product.get('id') is not None:
+                    products_by_id[str(product.get('id'))] = product
+            except ShopifyAPIError as exc:
+                if getattr(exc, 'is_rate_limited', False):
+                    raise
+                continue
+
         return products_by_id
 
     def get_product_status_snapshot(self, handle=None, product_id=None):
@@ -459,23 +493,20 @@ def fetch_shopify_status_map(tracked_rows, existing_map=None):
             status_map[row_key] = snapshot
             found_ids.add(row_key)
         else:
-            # ID saved but product missing — try handle next.
+            # ID saved but product missing from bulk — try direct ID + handle.
             handle = (row.get('shopify_handle') or '').strip()
-            if handle:
-                rows_handle_only.append((row_key, row, handle))
-            else:
-                status_map[row_key] = {
-                    'on_shopify': False,
-                    'status': None,
-                    'error': 'Saved Shopify product ID not found',
-                }
+            rows_handle_only.append((row_key, row, handle))
 
-    # Handle-only rows (and ID misses): one throttled request each.
+    # Handle-only rows (and ID misses): prefer product_id GET, then handle.
     for row_key, row, handle in rows_handle_only:
         if row_key in found_ids or row_key in status_map:
             continue
+        product_id = (row.get('shopify_product_id') or '').strip() or None
         try:
-            snapshot = client.get_product_status_snapshot(handle=handle)
+            snapshot = client.get_product_status_snapshot(
+                handle=handle or None,
+                product_id=product_id,
+            )
             if snapshot.get('on_shopify'):
                 snapshot['admin_url'] = get_shopify_admin_product_url(
                     snapshot.get('shopify_product_id')

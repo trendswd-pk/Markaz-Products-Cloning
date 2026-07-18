@@ -11,6 +11,10 @@ Documentation language: **English** throughout the `Documentation/` folder.
 - Rows with only a predicted **shopify_handle** (no `shopify_product_id`) no longer show as confirmed **Linked**.
 - They show **Shopify: Unverified** until **Refresh Shopify Status** / card **Shopify Status** verifies the product and **backfills the ID** into Supabase.
 - Markaz refresh keeps an existing saved handle (does not overwrite) so linkage is not broken.
+
+### Shopify Draft status load
+- Product list lookups now request **active + draft + archived** (`published_status=any`).
+- If a product ID is missing from the bulk list response (common for **Draft**), the app falls back to `GET products/{id}.json` so Draft/Active status still loads.
 - Default **Product Category** is **Apparel & Accessories** (CSV column + GraphQL on direct publish/update).
 - Temporary clothing default — change later in Shopify Admin for cosmetics / other types.
 
