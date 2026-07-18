@@ -29,6 +29,8 @@ def activate_demo_mode():
     supabase_store.update_tracked_shopify_metadata_batch = demo_store.update_tracked_shopify_metadata_batch
     supabase_store.delete_tracked_product = demo_store.delete_tracked_product
     supabase_store.delete_tracked_products = demo_store.delete_tracked_products
+    supabase_store.count_duplicate_tracked_products = demo_store.count_duplicate_tracked_products
+    supabase_store.dedupe_tracked_products = demo_store.dedupe_tracked_products
 
     shopify_config.is_shopify_configured = lambda: True
 

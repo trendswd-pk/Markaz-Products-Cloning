@@ -516,7 +516,7 @@ def scrape_product_from_page(page, url):
         'option1_name': option1_name,
         'breadcrumb_items': breadcrumb_items,
         'stock_status': stock_status,
-        'url': url,
+        'url': canonicalize_markaz_product_url(url) or url,
         'status': 'success',
     }
 
@@ -565,6 +565,46 @@ def normalize_product_url(href, base_url='https://www.markaz.app'):
     scheme = parsed.scheme or 'https'
     return f'{scheme}://{host}{path}'
 
+
+def extract_markaz_product_id(url):
+    """Return numeric Markaz product id from a product URL, if present.
+
+    Examples:
+      .../shop/product/some-slug/733730 → '733730'
+      .../shop/product/733730 → '733730'
+    """
+    if not url:
+        return None
+    parsed = urlparse(str(url).strip())
+    path = (parsed.path or '').rstrip('/')
+    match = re.search(r'/shop/product/(?:[^/]+/)?(\d+)$', path)
+    if match:
+        return match.group(1)
+    # Fallback: last path segment if numeric
+    tail = path.rsplit('/', 1)[-1]
+    return tail if tail.isdigit() else None
+
+
+def canonicalize_markaz_product_url(url):
+    """One stable form per Markaz product (host/scheme/trailing junk normalized).
+
+    Same product id with different slugs still share the same id for dedupe;
+    the returned URL keeps the slug from the input when present.
+    """
+    cleaned = normalize_product_url(url or '')
+    if not cleaned:
+        return (url or '').strip()
+    parsed = urlparse(cleaned)
+    path = parsed.path.rstrip('/')
+    return f'https://www.markaz.app{path}'
+
+
+def markaz_urls_are_same_product(url_a, url_b):
+    id_a = extract_markaz_product_id(url_a)
+    id_b = extract_markaz_product_id(url_b)
+    if id_a and id_b:
+        return id_a == id_b
+    return canonicalize_markaz_product_url(url_a) == canonicalize_markaz_product_url(url_b)
 
 def build_category_page_url(category_url, page_number):
     """Build category URL with ?page=N (Markaz pagination)."""

@@ -17,9 +17,12 @@ from shopify_sync import (
     sync_tracked_rows_to_shopify,
 )
 from shopify_publish import publish_products_to_shopify
+from markaz_scraper import canonicalize_markaz_product_url, extract_markaz_product_id
 from supabase_config import is_supabase_configured
 from supabase_store import (
     batch_upsert_tracked_products,
+    count_duplicate_tracked_products,
+    dedupe_tracked_products,
     delete_tracked_product,
     delete_tracked_products,
     list_tracked_products,
@@ -418,7 +421,9 @@ def save_product_to_supabase(product_data):
     if not is_supabase_configured():
         return False, 'Supabase keys not configured in .streamlit/secrets.toml'
 
-    markaz_url = (product_data or {}).get('url', '').strip()
+    markaz_url = canonicalize_markaz_product_url(
+        (product_data or {}).get('url', '').strip()
+    )
     if not markaz_url:
         return False, 'Product URL missing'
 
@@ -428,13 +433,13 @@ def save_product_to_supabase(product_data):
     )
 
     try:
-        upsert_tracked_product(
+        saved = upsert_tracked_product(
             markaz_url=markaz_url,
             stock_status=product_data.get('stock_status', 'unknown'),
             title=product_data.get('title'),
             shopify_handle=shopify_handle,
         )
-        patch_tracked_row_in_cache({
+        patch_tracked_row_in_cache(saved or {
             'markaz_url': markaz_url,
             'stock_status': product_data.get('stock_status', 'unknown'),
             'title': product_data.get('title'),
@@ -603,10 +608,25 @@ def patch_tracked_row_in_cache(row):
     cache = st.session_state.get('tracked_rows_cache')
     if cache is None:
         return
-    markaz_url = row['markaz_url']
+    markaz_url = canonicalize_markaz_product_url(row['markaz_url']) or row['markaz_url']
+    product_id = extract_markaz_product_id(markaz_url)
+    row = {**row, 'markaz_url': markaz_url}
+
     for index, existing in enumerate(cache):
-        if existing.get('markaz_url') == markaz_url:
+        existing_url = existing.get('markaz_url')
+        same_url = canonicalize_markaz_product_url(existing_url) == markaz_url
+        same_id = (
+            product_id
+            and extract_markaz_product_id(existing_url) == product_id
+        )
+        if same_url or same_id:
             cache[index] = {**existing, **row}
+            # Drop any other duplicates for same product id from cache.
+            if product_id:
+                st.session_state.tracked_rows_cache = [
+                    r for i, r in enumerate(cache)
+                    if i == index or extract_markaz_product_id(r.get('markaz_url')) != product_id
+                ]
             return
     cache.insert(0, row)
 
@@ -1018,6 +1038,28 @@ def render_tracked_products_tab():
     if not tracked_rows:
         st.info("No tracked products yet. Add a product in the Converter tab and it will appear here automatically.")
         return
+
+    dup_groups, dup_extra = count_duplicate_tracked_products(tracked_rows)
+    if dup_groups:
+        st.warning(
+            f"Found **{dup_groups}** duplicate Markaz product group(s) "
+            f"(**{dup_extra}** extra row(s)). Same product id / Shopify handle is linked more than once."
+        )
+        if st.button(
+            "Remove duplicate Markaz links",
+            type="primary",
+            key="dedupe_tracked_markaz_urls",
+            help="Keep one row per Markaz product id (merge Shopify fields), delete the extras.",
+        ):
+            with st.spinner("Merging duplicate Markaz links..."):
+                summary = dedupe_tracked_products(tracked_rows)
+            invalidate_tracked_rows_cache()
+            invalidate_shopify_status_cache()
+            st.success(
+                f"Removed **{summary.get('removed', 0)}** duplicate row(s) "
+                f"across **{summary.get('groups', 0)}** product group(s)."
+            )
+            st.rerun()
 
     stock_filter = st.radio(
         "Filter by Markaz stock",

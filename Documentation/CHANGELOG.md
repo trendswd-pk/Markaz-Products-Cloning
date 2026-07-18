@@ -5,6 +5,16 @@ Documentation language: **English** throughout the `Documentation/` folder.
 
 ---
 
+## 2026-07-18
+
+### Tracked Products — no duplicate Markaz links
+- Markaz URLs are **canonicalized** (`https://www.markaz.app/...`, no trailing junk).
+- Upsert matches by **numeric Markaz product id** (URL tail), not only exact URL string — so different slugs for the same product update one row.
+- Tracked Products shows a warning + **Remove duplicate Markaz links** when extras exist (also merges by shared Shopify handle).
+- Optional SQL cleanup: `supabase/04_dedupe_markaz_products.sql` (adds `markaz_product_id` + unique index).
+
+---
+
 ## 2026-07-17
 
 ### Variant images on Shopify publish
