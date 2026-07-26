@@ -1,0 +1,42 @@
+{
+  "site": "Markaz to Shopify Converter Documentation",
+  "base_url": "https://trendswd.com/web-applications/markaz-products-cloning/doc",
+  "version": "0.1.0",
+  "version_date": "2026-07-26",
+  "navigation": [
+    {
+      "title": "Home",
+      "path": "/docs",
+      "file": "index.md"
+    },
+    {
+      "title": "Getting started",
+      "children": [
+        { "title": "Getting started", "path": "/docs/00-getting-started", "file": "00-getting-started.md" },
+        { "title": "Version", "path": "/docs/APP-VERSION", "file": "APP-VERSION.md" },
+        { "title": "Changelog", "path": "/docs/CHANGELOG", "file": "CHANGELOG.md" },
+        { "title": "Configuration", "path": "/docs/14-configuration-setup", "file": "14-configuration-setup.md" },
+        { "title": "Demo mode", "path": "/docs/15-demo-mode", "file": "15-demo-mode.md" }
+      ]
+    },
+    {
+      "title": "Pages",
+      "children": [
+        { "title": "Login", "path": "/docs/01-login-page", "file": "01-login-page.md" },
+        { "title": "Dashboard overview", "path": "/docs/02-dashboard-overview", "file": "02-dashboard-overview.md" },
+        { "title": "Shopify Converter tab", "path": "/docs/03-shopify-converter-tab", "file": "03-shopify-converter-tab.md" },
+        { "title": "Add products — Single", "path": "/docs/04-add-products-single-mode", "file": "04-add-products-single-mode.md" },
+        { "title": "Add products — Multiple", "path": "/docs/05-add-products-multiple-mode", "file": "05-add-products-multiple-mode.md" },
+        { "title": "Add products — Category", "path": "/docs/16-add-products-category-mode", "file": "16-add-products-category-mode.md" },
+        { "title": "Product preview & pricing", "path": "/docs/06-product-preview-and-pricing", "file": "06-product-preview-and-pricing.md" },
+        { "title": "Product list", "path": "/docs/07-product-list-management", "file": "07-product-list-management.md" },
+        { "title": "Export CSV & publish", "path": "/docs/08-export-csv-and-publish", "file": "08-export-csv-and-publish.md" },
+        { "title": "Tracked Products tab", "path": "/docs/09-tracked-products-tab", "file": "09-tracked-products-tab.md" },
+        { "title": "Tracked bulk actions", "path": "/docs/10-tracked-products-bulk-actions", "file": "10-tracked-products-bulk-actions.md" },
+        { "title": "Tracked product card", "path": "/docs/11-tracked-product-card", "file": "11-tracked-product-card.md" },
+        { "title": "Publish feedback", "path": "/docs/12-shopify-publish-feedback", "file": "12-shopify-publish-feedback.md" },
+        { "title": "Pricing rules", "path": "/docs/13-pricing-rules", "file": "13-pricing-rules.md" }
+      ]
+    }
+  ]
+}
