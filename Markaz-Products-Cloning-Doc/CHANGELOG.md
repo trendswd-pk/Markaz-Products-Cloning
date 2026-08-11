@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-11
+
+### Platform
+
+- Supabase free-tier keep-alive: GitHub Action cron (every 3 days), in-app throttled ping, and `scripts/supabase_keepalive.py`
+
 ## 2026-07-26
 
 ### Documentation

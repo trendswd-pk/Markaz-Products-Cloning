@@ -58,6 +58,10 @@ Paste the same TOML blocks under **App settings → Secrets**. Do not commit `se
 
 `APP_USERNAME`, `APP_PASSWORD`, `SUPABASE_URL`, `SUPABASE_KEY`, `SHOPIFY_STORE_URL`, `SHOPIFY_CLIENT_ID`, `SHOPIFY_CLIENT_SECRET`, `SHOPIFY_ACCESS_TOKEN`, `SHOPIFY_API_VERSION`.
 
+### Keep Supabase free tier from pausing
+
+Add the same `SUPABASE_URL` and `SUPABASE_KEY` as **GitHub Actions secrets** so `.github/workflows/supabase-keepalive.yml` can ping the DB every 3 days. Local/manual check: `python scripts/supabase_keepalive.py`. The Streamlit app also sends a throttled keep-alive when you are logged in.
+
 ## Errors & edge cases
 
 - Missing login block → login page configuration error.

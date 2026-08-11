@@ -127,6 +127,23 @@ Details: [Documentation/13-pricing-rules.md](./Documentation/13-pricing-rules.md
 3. Add secrets in the Cloud app settings (`app_login`, `supabase`, `shopify`)  
 4. Ensure `requirements.txt` and `packages.txt` are present  
 
+### Keep Supabase free tier alive
+
+Free Supabase projects pause after ~7 days with no API activity. This repo includes:
+
+1. **GitHub Action** (`.github/workflows/supabase-keepalive.yml`) — pings `tracked_products` every 3 days  
+2. **In-app ping** — when you use the dashboard, a throttled keep-alive runs automatically  
+3. **Manual CLI** — `python scripts/supabase_keepalive.py`
+
+**One-time GitHub setup:** repo → Settings → Secrets and variables → Actions → add:
+
+| Secret | Value |
+|--------|--------|
+| `SUPABASE_URL` | `https://YOUR_PROJECT_ID.supabase.co` |
+| `SUPABASE_KEY` | same service_role key as Streamlit |
+
+Then Actions → **Keep Supabase Alive** → **Run workflow** once to verify.
+
 ### Vercel (optional scrape API)
 
 ```

@@ -19,6 +19,7 @@ from shopify_sync import (
 from shopify_publish import publish_products_to_shopify
 from markaz_scraper import canonicalize_markaz_product_url, extract_markaz_product_id
 from supabase_config import is_supabase_configured
+from supabase_keepalive import maybe_ping_supabase
 from supabase_store import (
     batch_upsert_tracked_products,
     count_duplicate_tracked_products,
@@ -2415,6 +2416,11 @@ def render_converter_tab():
 
 
 def main():
+    # Silent DB ping (throttled) so free-tier Supabase does not idle-pause.
+    # Primary keep-alive is GitHub Actions; this covers active app sessions.
+    if is_supabase_configured() and not _IS_DEMO:
+        maybe_ping_supabase()
+
     render_logout_control()
     st.title("Markaz to Shopify CSV Converter")
     st.markdown("Scrape Markaz product data and convert to Shopify-compatible CSV format.")

@@ -1,0 +1,43 @@
+# Keeps the free-tier Supabase project from pausing after ~7 days of idle.
+# Runs every 3 days + on-demand from the Actions tab.
+#
+# One-time setup (GitHub repo → Settings → Secrets and variables → Actions):
+#   SUPABASE_URL  = https://YOUR_PROJECT_ID.supabase.co
+#   SUPABASE_KEY  = service_role key (same as Streamlit secrets.toml)
+#
+# Then: Actions → "Keep Supabase Alive" → Run workflow (manual test).
+
+name: Keep Supabase Alive
+
+on:
+  schedule:
+    # Every 3 days at 06:00 UTC (well under the 7-day inactivity limit)
+    - cron: '0 6 */3 * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Ping Supabase REST API
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${SUPABASE_URL:-}" ] || [ -z "${SUPABASE_KEY:-}" ]; then
+            echo "Missing GitHub Actions secrets: SUPABASE_URL and/or SUPABASE_KEY"
+            echo "Add them under Settings → Secrets and variables → Actions"
+            exit 1
+          fi
+          code=$(curl -sS -o /tmp/sb_keepalive.json -w "%{http_code}" \
+            "${SUPABASE_URL%/}/rest/v1/tracked_products?select=id&limit=1" \
+            -H "apikey: ${SUPABASE_KEY}" \
+            -H "Authorization: Bearer ${SUPABASE_KEY}" \
+            -H "Accept: application/json")
+          echo "HTTP ${code}"
+          cat /tmp/sb_keepalive.json
+          echo
+          test "${code}" = "200"
+          echo "Keep-alive OK — Supabase inactivity timer reset."
