@@ -8,7 +8,12 @@ from html import escape
 from pathlib import Path
 
 from auth import init_auth_session, is_authenticated, render_login_page, render_logout_control
-from pricing_rules import get_default_price_adjustments
+from pricing_rules import (
+    DEFAULT_DELIVERY_CHARGES,
+    DEFAULT_MARGIN_PERCENT,
+    compute_final_prices,
+    get_default_price_adjustments,
+)
 from shopify_config import is_shopify_configured
 from shopify_sync import (
     delete_tracked_row_from_shopify,
@@ -90,6 +95,14 @@ if 'converter_import_message' not in st.session_state:
     st.session_state.converter_import_message = None
 if 'shopify_publish_feedback' not in st.session_state:
     st.session_state.shopify_publish_feedback = None
+if 'delivery_charges' not in st.session_state:
+    st.session_state.delivery_charges = DEFAULT_DELIVERY_CHARGES
+if 'margin_percent' not in st.session_state:
+    st.session_state.margin_percent = DEFAULT_MARGIN_PERCENT
+if 'applied_delivery_charges' not in st.session_state:
+    st.session_state.applied_delivery_charges = DEFAULT_DELIVERY_CHARGES
+if 'applied_margin_percent' not in st.session_state:
+    st.session_state.applied_margin_percent = DEFAULT_MARGIN_PERCENT
 
 init_auth_session()
 
@@ -485,12 +498,112 @@ def update_tracked_product_from_scrape(markaz_url, scraped_data, existing_row=No
     return result
 
 
-def apply_default_pricing_rules(product_data):
+def get_active_pricing_settings():
+    """Global Delivery Charges + Margin % used by Single / Multiple / Category fetch."""
+    delivery = float(st.session_state.get('delivery_charges', DEFAULT_DELIVERY_CHARGES))
+    margin = float(st.session_state.get('margin_percent', DEFAULT_MARGIN_PERCENT))
+    return delivery, margin
+
+
+def apply_default_pricing_rules(product_data, delivery_charges=None, margin_percent=None):
     fetched_price = float(product_data.get('price', 0))
-    variant_adjustment, compare_at_adjustment = get_default_price_adjustments(fetched_price)
+    if delivery_charges is None or margin_percent is None:
+        active_delivery, active_margin = get_active_pricing_settings()
+        delivery_charges = active_delivery if delivery_charges is None else delivery_charges
+        margin_percent = active_margin if margin_percent is None else margin_percent
+
+    variant_adjustment, compare_at_adjustment = get_default_price_adjustments(
+        fetched_price,
+        delivery_charges=delivery_charges,
+        margin_percent=margin_percent,
+    )
     product_data['variant_price_adjustment'] = variant_adjustment
     product_data['compare_at_price_adjustment'] = compare_at_adjustment
+    product_data['delivery_charges'] = float(delivery_charges)
+    product_data['margin_percent'] = float(margin_percent)
     return product_data
+
+
+def apply_pricing_settings_to_all_products(delivery_charges, margin_percent):
+    """Recompute sale/compare adjustments for every product already in the list."""
+    for product in st.session_state.products_list:
+        apply_default_pricing_rules(
+            product,
+            delivery_charges=delivery_charges,
+            margin_percent=margin_percent,
+        )
+    if st.session_state.fetched_product_data:
+        apply_default_pricing_rules(
+            st.session_state.fetched_product_data,
+            delivery_charges=delivery_charges,
+            margin_percent=margin_percent,
+        )
+    st.session_state.applied_delivery_charges = float(delivery_charges)
+    st.session_state.applied_margin_percent = float(margin_percent)
+
+
+def render_global_pricing_settings():
+    """Editable Delivery Charges + Margin % at top of Converter (applies to all modes)."""
+    st.subheader("Pricing Settings")
+    st.caption(
+        "Sale = (Markaz + Delivery) + Margin% · Compare-at = Markaz × 2. "
+        "Changes here apply to new fetches (Single / Multiple / Category) and the current list."
+    )
+
+    col1, col2, col3 = st.columns([2, 2, 3])
+    with col1:
+        delivery = st.number_input(
+            "Delivery Charges",
+            min_value=0.0,
+            value=float(st.session_state.delivery_charges),
+            step=5.0,
+            help="Added to Markaz price before margin is applied.",
+            key="pricing_delivery_charges_input",
+        )
+    with col2:
+        margin = st.number_input(
+            "Margin on all products (%)",
+            min_value=0.0,
+            value=float(st.session_state.margin_percent),
+            step=1.0,
+            help="Percent increase on (Markaz + Delivery).",
+            key="pricing_margin_percent_input",
+        )
+    with col3:
+        example_sale, example_compare = compute_final_prices(
+            1000,
+            delivery_charges=delivery,
+            margin_percent=margin,
+        )
+        st.markdown(
+            f"**Example (Markaz 1000):** Sale **Rs. {example_sale:,.2f}** · "
+            f"Compare-at **Rs. {example_compare:,.2f}**"
+        )
+
+    st.session_state.delivery_charges = float(delivery)
+    st.session_state.margin_percent = float(margin)
+
+    settings_changed = (
+        float(delivery) != float(st.session_state.applied_delivery_charges)
+        or float(margin) != float(st.session_state.applied_margin_percent)
+    )
+    if settings_changed:
+        apply_pricing_settings_to_all_products(delivery, margin)
+        # Refresh preview adjustment widgets so they pick up new defaults.
+        if st.session_state.fetched_product_data:
+            preview = st.session_state.fetched_product_data
+            st.session_state['variant_price_adjustment'] = preview.get(
+                'variant_price_adjustment', 0
+            )
+            st.session_state['compare_at_price_adjustment'] = preview.get(
+                'compare_at_price_adjustment', 0
+            )
+        st.info(
+            f"Pricing updated for all products in the list "
+            f"(Delivery Rs. {delivery:,.0f}, Margin {margin:g}%)."
+        )
+
+    st.divider()
 
 
 def get_filtered_tracked_rows(tracked_rows, stock_filter):
@@ -1838,6 +1951,8 @@ def render_converter_tab():
     }
     </style>
     """, unsafe_allow_html=True)
+
+    render_global_pricing_settings()
     
     # Title + mode buttons: Single | Multiple | Category
     c_title, c_single, c_multi, c_category, c_empty = st.columns([2, 1, 1, 1, 5])
@@ -2088,12 +2203,7 @@ def render_converter_tab():
                 with st.spinner("Fetching and adding product to list... This may take a few seconds."):
                     product_data = scrape_markaz_product(first_url)
                     if product_data['status'] == 'success':
-                        fetched_price = float(product_data.get('price', 0))
-                        default_variant_adjustment, default_compare_at_adjustment = (
-                            get_default_price_adjustments(fetched_price)
-                        )
-                        product_data['variant_price_adjustment'] = default_variant_adjustment
-                        product_data['compare_at_price_adjustment'] = default_compare_at_adjustment
+                        apply_default_pricing_rules(product_data)
                         st.session_state.products_list.append(product_data)
                         st.session_state.processed_urls.add(first_url)
                         st.session_state.url_input_counter += 1
@@ -2138,30 +2248,48 @@ def render_converter_tab():
         with col3:
             # Show fetched price
             fetched_price = float(product_data.get('price', 0))
+            delivery, margin = get_active_pricing_settings()
             st.info(f"**Fetched Price:** Rs. {fetched_price:,.2f}")
+            st.caption(
+                f"Using Delivery Rs. {delivery:,.0f} · Margin {margin:g}% "
+                f"(from Pricing Settings above)"
+            )
             
             # Calculate default values based on pricing rules
             default_variant_adjustment, default_compare_at_adjustment = (
-                get_default_price_adjustments(fetched_price)
+                get_default_price_adjustments(
+                    fetched_price,
+                    delivery_charges=delivery,
+                    margin_percent=margin,
+                )
             )
             
             # Variant Price Adjustment (with default value from pricing rules)
             variant_adjustment = st.number_input(
-                "Variant Price Adjustment",
-                value=default_variant_adjustment,
-                step=100.0,
-                help="Enter the amount to add to fetched price for Variant Price. Final Variant Price = Fetched Price + This Value",
+                "Sale Price Adjustment",
+                value=float(
+                    product_data.get('variant_price_adjustment', default_variant_adjustment)
+                ),
+                step=10.0,
+                help=(
+                    "Final Sale = Markaz + this value. "
+                    "Default = (Markaz + Delivery) × (1 + Margin%) − Markaz."
+                ),
                 key="variant_price_adjustment"
             )
             final_variant_price = fetched_price + variant_adjustment
-            st.markdown(f"**Final Variant:** Rs. {final_variant_price:,.2f}")
+            st.markdown(f"**Final Sale Price:** Rs. {final_variant_price:,.2f}")
             
             # Compare At Price Adjustment (with default value from pricing rules)
             compare_at_adjustment = st.number_input(
                 "Compare At Price Adjustment",
-                value=default_compare_at_adjustment,
-                step=100.0,
-                help="Enter the amount to add to fetched price for Compare At Price. Final Compare At Price = Fetched Price + This Value",
+                value=float(
+                    product_data.get(
+                        'compare_at_price_adjustment', default_compare_at_adjustment
+                    )
+                ),
+                step=10.0,
+                help="Final Compare-at = Markaz + this value. Default = Markaz × 2 − Markaz.",
                 key="compare_at_price_adjustment"
             )
             final_compare_at_price = fetched_price + compare_at_adjustment
@@ -2184,6 +2312,8 @@ def render_converter_tab():
             # Store price adjustments in product data
             product_to_add['variant_price_adjustment'] = variant_adjustment
             product_to_add['compare_at_price_adjustment'] = compare_at_adjustment
+            product_to_add['delivery_charges'] = delivery
+            product_to_add['margin_percent'] = margin
             
             # Add product to the main conversion list (st.session_state.products_list)
             st.session_state.products_list.append(product_to_add)
@@ -2249,8 +2379,15 @@ def render_converter_tab():
                     final_variant_price = fetched_price + variant_adjustment
                     final_compare_at_price = fetched_price + compare_at_adjustment
                     
-                    st.write("**Variant Price:**", f"Rs. {final_variant_price:,.2f}")
+                    st.write("**Sale Price:**", f"Rs. {final_variant_price:,.2f}")
                     st.write("**Compare At Price:**", f"Rs. {final_compare_at_price:,.2f}")
+                    delivery = product.get('delivery_charges')
+                    margin = product.get('margin_percent')
+                    if delivery is not None or margin is not None:
+                        st.caption(
+                            f"Delivery Rs. {float(delivery or 0):,.0f} · "
+                            f"Margin {float(margin or 0):g}%"
+                        )
                     st.write("**URL:**", product['url'])
                 
                 with col2:
@@ -2269,19 +2406,19 @@ def render_converter_tab():
                     
                     with col1:
                         new_variant_adjustment = st.number_input(
-                            "Variant Price Adjustment",
+                            "Sale Price Adjustment",
                             value=float(variant_adjustment),
-                            step=100.0,
+                            step=10.0,
                             key=f"edit_variant_{idx}"
                         )
                         new_final_variant = fetched_price + new_variant_adjustment
-                        st.write(f"**New Variant Price:** Rs. {new_final_variant:,.2f}")
+                        st.write(f"**New Sale Price:** Rs. {new_final_variant:,.2f}")
                     
                     with col2:
                         new_compare_at_adjustment = st.number_input(
                             "Compare At Price Adjustment",
                             value=float(compare_at_adjustment),
-                            step=100.0,
+                            step=10.0,
                             key=f"edit_compare_{idx}"
                         )
                         new_final_compare = fetched_price + new_compare_at_adjustment

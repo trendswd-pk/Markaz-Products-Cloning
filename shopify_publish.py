@@ -6,7 +6,7 @@ from html import escape
 from requests.exceptions import RequestException, Timeout
 
 from markaz_scraper import normalize_markaz_image_url
-from pricing_rules import COMPARE_AT_EXTRA, get_default_price_adjustments
+from pricing_rules import get_default_price_adjustments
 from shopify_config import is_shopify_configured
 from shopify_sync import DEFAULT_IN_STOCK_QTY, ShopifyAPIError, get_shopify_client
 
@@ -467,10 +467,24 @@ def _pricing_for_product(product):
     variant_adjustment = float(product.get('variant_price_adjustment', 0) or 0)
     compare_adjustment = float(product.get('compare_at_price_adjustment', 0) or 0)
 
-    if variant_adjustment == 0:
-        variant_adjustment, _ = get_default_price_adjustments(original_price)
-    if compare_adjustment == 0:
-        compare_adjustment = variant_adjustment + COMPARE_AT_EXTRA
+    if variant_adjustment == 0 and compare_adjustment == 0:
+        variant_adjustment, compare_adjustment = get_default_price_adjustments(
+            original_price,
+            delivery_charges=product.get('delivery_charges'),
+            margin_percent=product.get('margin_percent'),
+        )
+    elif variant_adjustment == 0:
+        variant_adjustment, _ = get_default_price_adjustments(
+            original_price,
+            delivery_charges=product.get('delivery_charges'),
+            margin_percent=product.get('margin_percent'),
+        )
+    elif compare_adjustment == 0:
+        _, compare_adjustment = get_default_price_adjustments(
+            original_price,
+            delivery_charges=product.get('delivery_charges'),
+            margin_percent=product.get('margin_percent'),
+        )
 
     return {
         'original_price': original_price,

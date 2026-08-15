@@ -95,13 +95,12 @@ Markaz-Products-Cloning/
 
 ## Pricing logic
 
-| Markaz price | Sale adjustment | Compare-at adjustment |
-|--------------|-----------------|------------------------|
-| &lt; 2000 | +500 | +2000 |
-| ≥ 2000 | +1500 | +3000 |
+| Field | Formula (defaults) |
+|-------|--------------------|
+| Sale price | `(Markaz + Delivery 215) × 1.25` (25% margin) |
+| Compare-at | `Markaz × 2` |
 
-- Sale price = Markaz + sale adjustment  
-- Compare at = Markaz + compare-at adjustment  
+- **Delivery Charges** and **Margin %** are editable at the top of Shopify Converter and apply to Single / Multiple / Category fetches and the current list.
 - Vendor on CSV and API publish: **at One Spot**
 
 Details: [Documentation/13-pricing-rules.md](./Documentation/13-pricing-rules.md)
