@@ -545,12 +545,8 @@ def apply_pricing_settings_to_all_products(delivery_charges, margin_percent):
 def render_global_pricing_settings():
     """Editable Delivery Charges + Margin % at top of Converter (applies to all modes)."""
     st.subheader("Pricing Settings")
-    st.caption(
-        "Sale = (Markaz + Delivery) + Margin% · Compare-at = Markaz × 2. "
-        "Changes here apply to new fetches (Single / Multiple / Category) and the current list."
-    )
 
-    col1, col2, col3 = st.columns([2, 2, 3])
+    col1, col2 = st.columns(2)
     with col1:
         delivery = st.number_input(
             "Delivery Charges",
@@ -569,16 +565,16 @@ def render_global_pricing_settings():
             help="Percent increase on (Markaz + Delivery).",
             key="pricing_margin_percent_input",
         )
-    with col3:
-        example_sale, example_compare = compute_final_prices(
-            1000,
-            delivery_charges=delivery,
-            margin_percent=margin,
-        )
-        st.markdown(
-            f"**Example (Markaz 1000):** Sale **Rs. {example_sale:,.2f}** · "
-            f"Compare-at **Rs. {example_compare:,.2f}**"
-        )
+
+    example_sale, example_compare = compute_final_prices(
+        1000,
+        delivery_charges=delivery,
+        margin_percent=margin,
+    )
+    st.caption(
+        f"Sale = (Markaz + Delivery) × (1 + Margin%) · Compare-at = Markaz × 2  \n"
+        f"Example Markaz 1000 → Sale Rs. {example_sale:,.2f} · Compare-at Rs. {example_compare:,.2f}"
+    )
 
     st.session_state.delivery_charges = float(delivery)
     st.session_state.margin_percent = float(margin)
