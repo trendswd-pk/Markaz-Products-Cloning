@@ -11,7 +11,14 @@ SIZE_PATTERN = re.compile(
 VARIANT_BUTTON_BLOCKLIST = {
     'copy', 'save', 'product details', 'add to bag', 'buy now', 'compare', 'share',
     'link', 'zoom', 'view', 'show more', 'download media', 'return policy',
+    'quantity', 'cash on delivery', 'secure payment', 'secure checkout',
 }
+
+# UI chrome that often sits near the Color picker and gets scraped as fake variants.
+COLOR_VALUE_REJECT_SUBSTRINGS = (
+    'delivery', 'charges', 'pkr', 'return', 'loved by', 'add to', 'buy now',
+    'cash on', 'secure', 'compare', 'share', 'download', 'quantity',
+)
 
 
 def launch_browser_for_serverless(playwright):
@@ -312,6 +319,43 @@ def _is_size_value(text):
     return bool(SIZE_PATTERN.match(text))
 
 
+def _is_color_value(text):
+    """Reject ratings, save counts, delivery CTAs, and other non-color button text."""
+    text = text.strip()
+    if not text or len(text) > 40:
+        return False
+    lowered = text.lower()
+    if lowered in VARIANT_BUTTON_BLOCKLIST:
+        return False
+    # Save counts ("207"), ratings ("5.0"), etc.
+    if re.fullmatch(r'[\d.]+', text):
+        return False
+    if '|' in text or re.search(r'\d+\s*-\s*\d+', text):
+        return False
+    if any(token in lowered for token in COLOR_VALUE_REJECT_SUBSTRINGS):
+        return False
+    # Labels themselves / overview field names, not selectable values.
+    if lowered in {'color', 'colour', 'colors', 'colours', 'size', 'sizes'}:
+        return False
+    return True
+
+
+def _valid_button_texts_near_label(label, is_valid, max_depth=3):
+    """Walk ancestors until at least one button text passes is_valid."""
+    for depth in range(1, max_depth + 1):
+        container = label.locator(f'xpath=ancestor::div[{depth}]').first
+        if container.count() == 0:
+            continue
+        valid = []
+        for button in container.locator('button').all():
+            text = button.inner_text().strip()
+            if text and is_valid(text) and text not in valid:
+                valid.append(text)
+        if valid:
+            return valid
+    return []
+
+
 def extract_variants(page, product_ld=None):
     variants = []
     option1_name = 'Title'
@@ -331,35 +375,66 @@ def extract_variants(page, product_ld=None):
                 sizes = [part.strip() for part in re.split(r',\s*', sizes_match.group(1).strip()) if part.strip()]
                 if sizes:
                     return 'Size', sizes
+
+            colors_match = re.search(
+                r'AVAILABLE COLOU?RS?\s*\n?\s*(.+?)(?:\n[A-Z][A-Z\s/&-]*\n|\nPRODUCT CODE|\nShow more|$)',
+                overview_text,
+                re.IGNORECASE | re.DOTALL,
+            )
+            if colors_match:
+                colors = [
+                    part.strip()
+                    for part in re.split(r',\s*', colors_match.group(1).strip())
+                    if part.strip() and _is_color_value(part.strip())
+                ]
+                if colors:
+                    return 'Color', colors
     except Exception:
         pass
 
     try:
         size_label = page.locator('text=/Size\\s*:?/').first
         if size_label.count() > 0:
-            container = size_label.locator('xpath=ancestor::div[2]').first
-            if container.count() > 0:
-                for button in container.locator('button').all():
-                    text = button.inner_text().strip()
-                    if _is_size_value(text) and text not in variants:
-                        variants.append(text)
-                if variants:
-                    return 'Size', variants
+            variants = _valid_button_texts_near_label(size_label, _is_size_value)
+            if variants:
+                return 'Size', variants
     except Exception:
         pass
 
     try:
-        color_label = page.locator('text=/Color\\s*:?/').first
+        # Prefer the shopper-facing "Color :" picker, not overview "Color" rows.
+        color_label = page.locator('text=/^\\s*Colou?r\\s*:?\\s*$/i').first
+        if color_label.count() == 0:
+            color_label = page.locator('text=/Colou?r\\s*:/i').first
         if color_label.count() > 0:
-            container = color_label.locator('xpath=ancestor::div[2]').first
-            if container.count() > 0:
-                color_variants = []
-                for button in container.locator('button').all():
-                    text = button.inner_text().strip()
-                    if text and text.lower() not in VARIANT_BUTTON_BLOCKLIST and text not in color_variants:
-                        color_variants.append(text)
-                if color_variants:
-                    return 'Color', color_variants
+            color_variants = _valid_button_texts_near_label(color_label, _is_color_value)
+            # Inline "Color: Purple" on the label itself.
+            if not color_variants:
+                label_text = color_label.inner_text().strip()
+                inline = re.search(r'Colou?r\s*:\s*(.+)$', label_text, re.IGNORECASE)
+                if inline and _is_color_value(inline.group(1).strip()):
+                    color_variants.append(inline.group(1).strip())
+            if color_variants:
+                return 'Color', color_variants
+    except Exception:
+        pass
+
+    # Fallback: overview Highlights "Color\nPurple" (single-color listings).
+    try:
+        overview = page.locator(
+            'xpath=//h2[contains(translate(.,"ABCDEFGHIJKLMNOPQRSTUVWXYZ","abcdefghijklmnopqrstuvwxyz"),"product overview")]/parent::*'
+        ).first
+        if overview.count() > 0:
+            overview_text = overview.inner_text()
+            highlight_color = re.search(
+                r'(?:^|\n)Colou?r\s*\n([^\n]+)',
+                overview_text,
+                re.IGNORECASE,
+            )
+            if highlight_color:
+                color = highlight_color.group(1).strip()
+                if _is_color_value(color):
+                    return 'Color', [color]
     except Exception:
         pass
 
