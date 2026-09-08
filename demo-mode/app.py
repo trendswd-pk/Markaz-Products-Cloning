@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+# Ensures `import demo_mode.*` resolves via the root shim → this folder.
 from demo_mode.bootstrap import activate_demo_mode
 
 activate_demo_mode()

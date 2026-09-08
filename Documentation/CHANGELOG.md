@@ -18,6 +18,8 @@ All notable changes to Markaz to Shopify Converter are documented here.
 
 ### Fixed
 - Main Vercel deploy ignore list now excludes `demo_mode/` and `Documentation/` so the demo stays a separate host
+- Streamlit Cloud Demo deploy: removed root `packages.txt` (Playwright apt libs) so Cloud no longer fails on stale apt mirrors; libs live in `packages.playwright.txt` for local/production only
+- Import shim `demo_mode/` → `demo-mode/` so Streamlit entry `demo-mode/app.py` works with Python package imports
 
 ## [0.1.0] — 2026-07-26
 

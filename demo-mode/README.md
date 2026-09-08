@@ -2,7 +2,9 @@
 
 Standalone offline demo for the Trends WD portfolio. Clients can try the full UI without production backends, secrets, Playwright, Supabase, or live Shopify.
 
-**Demo is excluded from the main product deploy** (Vercel API / production Streamlit `app.py`). Deploy this folder as its **own** Streamlit Cloud (or similar) project with main file `demo_mode/app.py`.
+**Demo is excluded from the main product deploy** (Vercel API / production Streamlit `app.py`). Deploy this folder as its **own** Streamlit Cloud project with main file `demo-mode/app.py`.
+
+Streamlit Cloud must **not** use a root `packages.txt` full of Playwright OS libraries for this demo — those are optional and live in `packages.playwright.txt` for local Chromium installs only.
 
 ## Run locally
 
