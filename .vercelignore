@@ -57,6 +57,13 @@ htmlcov/
 # Documentation (not needed for deployment)
 # Keep README.md for GitHub
 docs/
+Documentation/
+Markaz-Products-Cloning-Doc/
+
+# Standalone demo — deploy separately (Streamlit Root: demo_mode/app.py)
+demo_mode/
+Portfolio-Project-Setup-Prompt.md
+Documentation-Ready-Prompt.md
 
 # Test files
 tests/

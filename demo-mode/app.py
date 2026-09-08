@@ -6,9 +6,12 @@ import streamlit as st
 
 os.environ['MARKAZ_DEMO_MODE'] = '1'
 
+_FAVICON = Path(__file__).resolve().parent / 'public' / 'favicon.png'
+_PAGE_ICON = str(_FAVICON) if _FAVICON.exists() else '🛍️'
+
 st.set_page_config(
     page_title='Markaz to Shopify — Demo Mode',
-    page_icon='🛍️',
+    page_icon=_PAGE_ICON,
     layout='wide',
 )
 

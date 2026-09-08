@@ -1,0 +1,55 @@
+# dependencies / envs
+venv/
+.venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+dist/
+build/
+*.egg
+
+# testing
+coverage/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+
+# env (never commit secrets)
+.env
+.env.*
+!.env.example
+.streamlit/secrets.toml
+
+# demo user sandboxes (generated at runtime)
+data/
+
+# misc / OS
+.DS_Store
+Thumbs.db
+*.pem
+
+# debug
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# vercel / local tooling
+.vercel
+*.tsbuildinfo
+
+# Playwright / capture junk
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+.playwright/
+node_modules/

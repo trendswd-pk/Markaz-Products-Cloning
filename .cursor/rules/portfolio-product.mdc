@@ -1,0 +1,48 @@
+---
+description: Trends WD portfolio product — demo, docs, changelog, version discipline
+alwaysApply: true
+---
+
+# Trends WD portfolio product rules
+
+This repo ships on the Trends WD portfolio via `demo_mode/` + `Documentation/`.
+
+## On every meaningful change (UI, features, demo, docs, fixes)
+
+1. Update `Documentation/CHANGELOG.md` under **today’s date** (newest section on top).
+   - If a section for today / current version already exists, append bullets there.
+   - If not, add a new `## [x.y.z] — YYYY-MM-DD` section.
+   - Use client-readable bullets (Added / Changed / Fixed / Removed).
+   - Never log secrets, jokes, or internal blame notes.
+
+2. Keep these version fields identical when you bump:
+   - `Documentation/version.json` → `version`, `released`
+   - `Documentation/APP-VERSION.md`
+   - `Documentation/_meta/navigation.json` → `version`, `version_date`
+   - `Documentation/index.md` version table
+   - Top changelog section heading
+
+3. **Version bump policy (do this without being asked):**
+   - Same calendar day, small ongoing edits → keep same version; append CHANGELOG bullets under today’s section.
+   - End of a work session with shippable changes, or a new calendar day with new changes → bump **patch** (`1.0.0` → `1.0.1`) and set `released` / `version_date` to **today**.
+   - New user-facing feature set → bump **minor** (`1.0.x` → `1.1.0`).
+   - Breaking workflow / major redesign → bump **major** (`1.x` → `2.0.0`).
+   - Always sync all version files listed above in the same edit.
+
+4. If UI screens changed: refresh Playwright screenshots into `Documentation/images/`, update `SCREENSHOT-INDEX.md`, and fix guide image links (`./images/...` only). Also refresh hero / gallery images in root `README.md` if those screens changed.
+
+5. If Demo Mode behavior/seed changed: update `demo_mode/` and any docs that describe those screens. Keep seed data professional.
+
+6. Never put passwords in `demo_mode/demo.json`. Never invent a fake `live_demo_url`.
+
+7. **Never let `demo_mode/` enter the main product production build.** Keep root `.vercelignore` excluding `demo_mode`. Do not import demo UI as the production entry. Root Vercel build must stay green for `api/`. Deploy demo as a **separate** Streamlit project (`demo_mode/app.py`). If a change risks pulling demo into the main build, fix excludes in the same session.
+
+8. Keep **`demo_mode/.gitignore`** present and up to date (venv, `__pycache__`, `.env*`, `data/`, Playwright junk). Mirror root ignores into demo_mode.
+
+9. Client-facing docs and root `README.md` stay professional English — no Hinglish, no meme copy, no empty “lorem” UI in screenshots.
+
+10. When finishing a change set, briefly confirm in the reply: changelog updated + version (or “same version, bullets appended”). If README visuals/copy changed, say so. If build-exclude or gitignore files changed, mention that too.
+
+11. After a full pipeline run (or when asked), keep root `README.md` aligned with product + `Documentation/` (see portfolio Phase 6). Prefer embedding screenshots from `Documentation/images/` via `Documentation/images/filename.png` — do not invent image paths.
+
+Note: This stack uses the Python package folder name `demo_mode/` (underscore). Treat it as the portfolio demo folder equivalent of `demo-mode/`.

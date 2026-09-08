@@ -78,6 +78,20 @@ def seed_dummy_data_if_empty(username):
     st.session_state._demo_storage_user = username
 
 
+def reset_demo_data(username=None):
+    """Replace the signed-in user's sandbox with fresh professional seed data."""
+    username = username or st.session_state.get('auth_username') or 'guest'
+    storage = PerUserStorage(username)
+    storage.set(TRACKED_PRODUCTS_KEY, deepcopy(DUMMY_TRACKED_PRODUCTS))
+    st.session_state.demo_storage = storage
+    st.session_state._demo_storage_user = username
+    st.session_state.products_list = []
+    st.session_state.processed_urls = set()
+    st.session_state.fetched_product_data = None
+    st.session_state.shopify_status_map = {}
+    return storage
+
+
 def render_local_storage_bridge():
     """No-op: browser localStorage sync disabled (components.html segfaults on some Linux setups).
 

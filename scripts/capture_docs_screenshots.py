@@ -3,7 +3,7 @@
 Auto-capture documentation screenshots with Playwright.
 
 Targets the Streamlit demo app (no secrets required) and saves PNGs into:
-  Markaz-Products-Cloning-Doc/images/
+  Documentation/images/
 
 Usage:
   # Start demo app in another terminal (or let this script start it):
@@ -11,26 +11,29 @@ Usage:
 
   python scripts/capture_docs_screenshots.py
   python scripts/capture_docs_screenshots.py --url http://127.0.0.1:8501 --no-start
+  DOCS_URL=http://127.0.0.1:8501 node demo_mode/capture-docs.js
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import signal
 import subprocess
 import sys
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from playwright.sync_api import Page, sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
-OUT_DIR = ROOT / "Markaz-Products-Cloning-Doc" / "images"
+OUT_DIR = ROOT / "Documentation" / "images"
 DEMO_ENTRY = ROOT / "demo_mode" / "app.py"
-DEFAULT_URL = "http://127.0.0.1:8501"
-DEMO_USER = "demo"
-DEMO_PASS = "demo123"
+DEFAULT_URL = os.environ.get("DOCS_URL", "http://127.0.0.1:8501")
+DEMO_USER = os.environ.get("DOCS_EMAIL", "admin@admin.com")
+DEMO_PASS = os.environ.get("DOCS_PASSWORD", "admin123")
 DEMO_PRODUCT_URL = "https://www.markaz.app/shop/product/demo-silk-kurti-for-docs"
 
 
@@ -353,6 +356,26 @@ def main() -> int:
                 proc.wait(timeout=8)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+    index_path = out_dir / "SCREENSHOT-INDEX.md"
+    index_lines = [
+        "# Screenshot index",
+        "",
+        f"- **Captured:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M UTC')}",
+        f"- **Base URL:** `{base_url}`",
+        f"- **User:** `{DEMO_USER}`",
+        f"- **PNG count:** {len(shots.saved)}",
+        "",
+        "| # | file | route / area | what | notes |",
+        "|---|------|--------------|------|-------|",
+    ]
+    for i, path in enumerate(shots.saved, start=1):
+        index_lines.append(
+            f"| {i} | `{path.name}` | Demo Mode UI | Auto-captured via Playwright | Streamlit demo |"
+        )
+    index_lines.append("")
+    index_path.write_text("\n".join(index_lines), encoding="utf-8")
+    print(f"Wrote {index_path.relative_to(ROOT)}")
 
     print(f"\nDone. Saved {len(shots.saved)} screenshot(s):")
     for path in shots.saved:
