@@ -44,11 +44,11 @@ Demo Mode lets stakeholders try the full workflow with simulated scrape and Shop
 
 ## Demo
 
-- **Local:** from the repo root, run `streamlit run demo_mode/app.py` (details in [`demo_mode/README.md`](demo_mode/README.md))
+- **Local:** from the repo root, run `streamlit run demo-mode/app.py` (details in [`demo-mode/README.md`](demo-mode/README.md))
 - **Live demo:** [https://demomode-for-makaz.streamlit.app/](https://demomode-for-makaz.streamlit.app/)
 - **Logins:** shown as account cards on the Demo Mode login screen (Admin, Editor / Staff, Viewer)
 
-Demo Mode must be deployed as its **own** Streamlit project (`demo_mode/app.py`). It is excluded from the main Vercel API deploy.
+Demo Mode must be deployed as its **own** Streamlit project (`demo-mode/app.py`). It is excluded from the main Vercel API deploy.
 
 ## Documentation
 

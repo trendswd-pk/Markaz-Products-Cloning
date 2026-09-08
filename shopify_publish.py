@@ -40,6 +40,7 @@ DEFAULT_PRODUCT_METAFIELDS = (AGE_GROUP_METAFIELD, TARGET_GENDER_METAFIELD)
 def _block_demo_shopify_api(action='publish to Shopify'):
     if os.environ.get('MARKAZ_DEMO_MODE') != '1':
         return
+    import demo_mode_loader  # noqa: F401 — maps demo-mode/ → demo_mode
     from demo_mode.demo_guard import block_real_shopify_api
 
     block_real_shopify_api(action)

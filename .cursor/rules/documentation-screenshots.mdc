@@ -8,6 +8,6 @@ alwaysApply: false
 
 - Canonical images live in `Documentation/images/`.
 - In markdown guides link only as `![Alt](./images/file.png)`.
-- Do not link `demo_mode/screenshots/`.
+- Do not link `demo-mode/screenshots/`.
 - Do not invent filenames; check `Documentation/images/SCREENSHOT-INDEX.md`.
 - After adding/renaming images, update the matching guide and navigation if needed.

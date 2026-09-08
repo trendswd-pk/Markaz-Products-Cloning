@@ -29,7 +29,7 @@ Protects the dashboard behind a username and password. Production uses secrets; 
 
 ### Demo Mode
 
-1. Open Demo Mode (`streamlit run demo_mode/app.py`).
+1. Open Demo Mode (`streamlit run demo-mode/app.py`).
 2. Click an account card to fill the form, or type credentials:
    - `admin@admin.com` / `admin123` (Admin)
    - `demo` / `demo123` (Editor / Staff)

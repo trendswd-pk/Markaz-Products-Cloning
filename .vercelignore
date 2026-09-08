@@ -62,7 +62,6 @@ Markaz-Products-Cloning-Doc/
 
 # Standalone demo — deploy separately (Streamlit main file: demo-mode/app.py)
 demo-mode/
-demo_mode/
 Portfolio-Project-Setup-Prompt.md
 Documentation-Ready-Prompt.md
 

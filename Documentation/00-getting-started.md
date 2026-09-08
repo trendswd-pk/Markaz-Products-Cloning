@@ -34,7 +34,7 @@ playwright install chromium
 **Demo Mode** (no secrets, simulated Markaz / Shopify):
 
 ```bash
-streamlit run demo_mode/app.py
+streamlit run demo-mode/app.py
 ```
 
 Open **http://localhost:8501** and sign in using the Demo Mode account cards. See [Demo mode](./15-demo-mode.md).

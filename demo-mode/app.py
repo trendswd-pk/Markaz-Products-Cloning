@@ -6,7 +6,8 @@ import streamlit as st
 
 os.environ['MARKAZ_DEMO_MODE'] = '1'
 
-_FAVICON = Path(__file__).resolve().parent / 'public' / 'favicon.png'
+_HERE = Path(__file__).resolve().parent
+_FAVICON = _HERE / 'public' / 'favicon.png'
 _PAGE_ICON = str(_FAVICON) if _FAVICON.exists() else '🛍️'
 
 st.set_page_config(
@@ -15,11 +16,22 @@ st.set_page_config(
     layout='wide',
 )
 
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = _HERE.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-# Ensures `import demo_mode.*` resolves via the root shim → this folder.
+# Register hyphen folder `demo-mode/` as importable `demo_mode` package.
+import importlib.util
+
+_reg_spec = importlib.util.spec_from_file_location(
+    '_demo_mode_register_pkg',
+    _HERE / 'register_pkg.py',
+)
+_reg_mod = importlib.util.module_from_spec(_reg_spec)
+assert _reg_spec.loader is not None
+_reg_spec.loader.exec_module(_reg_mod)
+_reg_mod.ensure_demo_mode_package()
+
 from demo_mode.bootstrap import activate_demo_mode
 
 activate_demo_mode()

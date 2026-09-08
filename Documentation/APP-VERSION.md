@@ -10,4 +10,4 @@ See [CHANGELOG.md](./CHANGELOG.md) for the full history.
 - Simulated Markaz scrape and Shopify publish/sync (no secrets required)
 - Portfolio documentation under `Documentation/` with screenshot gallery
 - Root README aligned with Demo Mode and documentation screenshots
-- Production deploy excludes `demo_mode/` (demo ships as a separate Streamlit entry)
+- Production deploy excludes `demo-mode/` (demo ships as a separate Streamlit entry)

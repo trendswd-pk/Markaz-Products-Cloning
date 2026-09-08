@@ -7,11 +7,11 @@ Targets the Streamlit demo app (no secrets required) and saves PNGs into:
 
 Usage:
   # Start demo app in another terminal (or let this script start it):
-  streamlit run demo_mode/app.py --server.headless true --server.port 8501
+  streamlit run demo-mode/app.py --server.headless true --server.port 8501
 
   python scripts/capture_docs_screenshots.py
   python scripts/capture_docs_screenshots.py --url http://127.0.0.1:8501 --no-start
-  DOCS_URL=http://127.0.0.1:8501 node demo_mode/capture-docs.js
+  DOCS_URL=http://127.0.0.1:8501 node demo-mode/capture-docs.js
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ from playwright.sync_api import Page, sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
 OUT_DIR = ROOT / "Documentation" / "images"
-DEMO_ENTRY = ROOT / "demo_mode" / "app.py"
+DEMO_ENTRY = ROOT / "demo-mode" / "app.py"
 DEFAULT_URL = os.environ.get("DOCS_URL", "http://127.0.0.1:8501")
 DEMO_USER = os.environ.get("DOCS_EMAIL", "admin@admin.com")
 DEMO_PASS = os.environ.get("DOCS_PASSWORD", "admin123")

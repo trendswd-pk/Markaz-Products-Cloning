@@ -1,7 +1,7 @@
 # Demo mode
 
 **Version:** 1.0.0  
-**Route:** `streamlit run demo_mode/app.py`  
+**Route:** `streamlit run demo-mode/app.py`  
 **Who can access:** anyone (built-in demo accounts on the login screen)
 
 ![Demo mode banner](./images/18-demo-mode.png)
@@ -27,7 +27,7 @@ Runs a self-contained demo of the Markaz → Shopify workflow with **no Supabase
 1. From the repo root:
 
    ```bash
-   streamlit run demo_mode/app.py
+   streamlit run demo-mode/app.py
    ```
 
 2. Sign in using the account cards on the login screen (credentials are shown there).
@@ -42,7 +42,7 @@ Runs a self-contained demo of the Markaz → Shopify workflow with **no Supabase
 |---------|------|------------|
 | Secrets | None | Required |
 | Scrape | Simulated from URL | Playwright |
-| Storage | `demo_mode/data/users/{username}/` | Supabase |
+| Storage | `demo-mode/data/users/{username}/` | Supabase |
 | Shopify | Simulated | Admin API |
 | Add modes | Single URL only | Single / Multiple / Category |
 | CSV download | Not in demo UI | Yes |
@@ -55,8 +55,8 @@ First login seeds **3 professional tracked products**. Handles are prefixed with
 ## Errors & edge cases
 
 - Role labels do not change permissions; sandboxes are isolated per username.
-- Clearing `demo_mode/data/users/{username}/` resets that user’s store.
-- Live demo URL is stored only in `demo_mode/demo.json` → `live_demo_url` (no passwords there).
+- Clearing `demo-mode/data/users/{username}/` resets that user’s store.
+- Live demo URL is stored only in `demo-mode/demo.json` → `live_demo_url` (no passwords there).
 
 ## Related links
 

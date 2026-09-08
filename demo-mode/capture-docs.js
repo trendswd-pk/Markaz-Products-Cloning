@@ -3,9 +3,9 @@
  * Portfolio screenshot capture entry (Phase 3).
  * Delegates to the Python Playwright script for this Streamlit demo.
  *
- * Usage (from repo root or demo_mode/):
- *   DOCS_URL=http://127.0.0.1:8501 node demo_mode/capture-docs.js
- *   node demo_mode/capture-docs.js --no-start
+ * Usage (from repo root or demo-mode/):
+ *   DOCS_URL=http://127.0.0.1:8501 node demo-mode/capture-docs.js
+ *   node demo-mode/capture-docs.js --no-start
  */
 const { spawnSync } = require("child_process");
 const path = require("path");

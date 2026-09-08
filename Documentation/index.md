@@ -8,7 +8,7 @@ Scrape products from [Markaz](https://www.markaz.app), apply sale / compare-at m
 | **Released** | 2026-09-08 |
 
 **Live demo:** [https://demomode-for-makaz.streamlit.app/](https://demomode-for-makaz.streamlit.app/)  
-**Local demo:** `streamlit run demo_mode/app.py`  
+**Local demo:** `streamlit run demo-mode/app.py`  
 **Demo logins:** shown as account cards on the Demo Mode login screen (Admin, Editor, Viewer).
 
 ## What’s new in 1.0.0
@@ -62,4 +62,4 @@ Login
 
 ## Related
 
-Screenshots live in [`./images/`](./images/). Re-capture with `python scripts/capture_docs_screenshots.py` or `node demo_mode/capture-docs.js` from the repo root.
+Screenshots live in [`./images/`](./images/). Re-capture with `python scripts/capture_docs_screenshots.py` or `node demo-mode/capture-docs.js` from the repo root.

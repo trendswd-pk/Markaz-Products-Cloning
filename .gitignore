@@ -49,9 +49,9 @@ ENV/
 .playwright/
 
 # Demo Mode runtime sandboxes (also ignored inside demo_mode/.gitignore)
-demo_mode/data/
-demo_mode/node_modules/
-demo_mode/.venv/
+demo-mode/data/
+demo-mode/node_modules/
+demo-mode/.venv/
 
 # OS
 Thumbs.db

@@ -95,6 +95,6 @@ def reset_demo_data(username=None):
 def render_local_storage_bridge():
     """No-op: browser localStorage sync disabled (components.html segfaults on some Linux setups).
 
-    Demo data persists via server-side JSON in demo_mode/data/users/.
+    Demo data persists via server-side JSON in demo-mode/data/users/.
     """
     return

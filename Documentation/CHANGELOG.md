@@ -6,7 +6,7 @@ All notable changes to Markaz to Shopify Converter are documented here.
 
 ### Added
 - Portfolio Demo Mode polish: Trends WD favicon, clickable demo account cards, and **Reset demo data**
-- `demo_mode/demo.json` for portfolio Live Demo wiring (`type`: `web-app`)
+- `demo-mode/demo.json` for portfolio Live Demo wiring (`type`: `web-app`)
 - Canonical documentation pack under `Documentation/` with screenshot pipeline to `Documentation/images/`
 - Cursor rules for changelog, version sync, and demo/production separation
 - Professional root README with documentation screenshots
@@ -17,9 +17,9 @@ All notable changes to Markaz to Shopify Converter are documented here.
 - Screenshot capture output path moved to `Documentation/images/`
 
 ### Fixed
-- Main Vercel deploy ignore list now excludes `demo_mode/` and `Documentation/` so the demo stays a separate host
+- Main Vercel deploy ignore list now excludes `demo-mode/` and `Documentation/` so the demo stays a separate host
 - Streamlit Cloud Demo deploy: removed root `packages.txt` (Playwright apt libs) so Cloud no longer fails on stale apt mirrors; libs live in `packages.playwright.txt` for local/production only
-- Import shim `demo_mode/` → `demo-mode/` so Streamlit entry `demo-mode/app.py` works with Python package imports
+- Consolidated Demo Mode into a single folder `demo-mode/` (removed duplicate `demo_mode/`); Python imports use `demo_mode_loader` / `register_pkg.py` alias
 
 ## [0.1.0] — 2026-07-26
 

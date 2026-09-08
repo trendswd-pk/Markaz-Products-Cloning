@@ -55,6 +55,7 @@ def render_shopify_tab_icon():
 
 
 if _IS_DEMO:
+    import demo_mode_loader  # noqa: F401 — maps demo-mode/ → demo_mode
     from demo_mode.demo_scrape import scrape_markaz_product_demo as scrape_markaz_product
     from demo_mode.demo_scrape import scrape_product_from_page_demo as scrape_product_from_page
     from demo_mode.demo_scrape import scrape_category_product_urls_demo as scrape_category_product_urls
@@ -72,7 +73,7 @@ else:
 if not os.environ.get('MARKAZ_DEMO_MODE'):
     os.system('playwright install chromium')
 
-# Page configuration (skipped in demo_mode/app.py — that entry sets config first)
+# Page configuration (skipped in demo-mode/app.py — that entry sets config first)
 if not os.environ.get('MARKAZ_DEMO_MODE'):
     st.set_page_config(
         page_title="Markaz to Shopify CSV Converter",
@@ -1002,6 +1003,7 @@ def apply_shopify_sync_results(results):
 
 def show_shopify_sync_summary(synced_count, failed_results):
     if os.environ.get('MARKAZ_DEMO_MODE') == '1':
+        import demo_mode_loader  # noqa: F401
         from demo_mode.demo_guard import DEMO_SHOPIFY_ALERT
 
         st.warning(DEMO_SHOPIFY_ALERT)
@@ -1099,6 +1101,7 @@ def render_shopify_publish_feedback():
 
 def show_shopify_publish_summary(created_count, updated_count, failed_results, warning_results=None):
     if os.environ.get('MARKAZ_DEMO_MODE') == '1':
+        import demo_mode_loader  # noqa: F401
         from demo_mode.demo_guard import DEMO_SHOPIFY_ALERT
 
         st.warning(DEMO_SHOPIFY_ALERT)
@@ -1142,6 +1145,7 @@ def show_shopify_publish_summary(created_count, updated_count, failed_results, w
 
 def fetch_markaz_products_from_tracked_rows(tracked_rows):
     if os.environ.get('MARKAZ_DEMO_MODE') == '1':
+        import demo_mode_loader  # noqa: F401
         from demo_mode.demo_markaz import fetch_demo_products_from_tracked_rows
 
         return fetch_demo_products_from_tracked_rows(tracked_rows)

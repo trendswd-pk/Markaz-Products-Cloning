@@ -14,7 +14,7 @@ From the repository root:
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-streamlit run demo_mode/app.py
+streamlit run demo-mode/app.py
 ```
 
 Open **http://localhost:8501**. No `.env` or secrets file required.
@@ -29,7 +29,7 @@ Shown as clickable cards on the Demo Login screen:
 | Editor / Staff | `demo` | `demo123` |
 | Viewer | `viewer@demo.com` (or `viewer`) | `view123` |
 
-Each account has an isolated JSON sandbox under `demo_mode/data/users/`. Seed data loads on first login. Use **Reset demo data** in the banner to restore seeds.
+Each account has an isolated JSON sandbox under `demo-mode/data/users/`. Seed data loads on first login. Use **Reset demo data** in the banner to restore seeds.
 
 ## `demo.json`
 
@@ -45,7 +45,7 @@ Each account has an isolated JSON sandbox under `demo_mode/data/users/`. Seed da
 
 ## Branding
 
-- Favicon: `demo_mode/public/favicon.png` (Trends WD live asset).
+- Favicon: `demo-mode/public/favicon.png` (Trends WD live asset).
 
 ## Screenshots
 
@@ -53,7 +53,7 @@ Each account has an isolated JSON sandbox under `demo_mode/data/users/`. Seed da
 # From repo root (writes to Documentation/images/)
 python scripts/capture_docs_screenshots.py
 # or
-node demo_mode/capture-docs.js
+node demo-mode/capture-docs.js
 ```
 
 ## What is mocked
@@ -66,10 +66,12 @@ node demo_mode/capture-docs.js
 | Tracked Products | Professional seed rows on first login |
 | Delete tracked row | Removes from demo JSON only |
 
-## Storage keys
+## Storage
 
-Per-user files: `demo_mode/data/users/{username}/local_storage.json`  
+Per-user files: `demo-mode/data/users/{username}/local_storage.json`  
 Namespace: `markaz_demo` / slug `markaz-products-cloning`.
+
+Python note: the folder is named **`demo-mode/`**. Code still uses `import demo_mode…` via `register_pkg.py` / root `demo_mode_loader.py` because hyphens are not valid Python package names.
 
 ## Production app
 

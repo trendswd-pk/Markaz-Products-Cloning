@@ -5,7 +5,7 @@ alwaysApply: true
 
 # Trends WD portfolio product rules
 
-This repo ships on the Trends WD portfolio via `demo_mode/` + `Documentation/`.
+This repo ships on the Trends WD portfolio via `demo-mode/` + `Documentation/`.
 
 ## On every meaningful change (UI, features, demo, docs, fixes)
 
@@ -31,13 +31,13 @@ This repo ships on the Trends WD portfolio via `demo_mode/` + `Documentation/`.
 
 4. If UI screens changed: refresh Playwright screenshots into `Documentation/images/`, update `SCREENSHOT-INDEX.md`, and fix guide image links (`./images/...` only). Also refresh hero / gallery images in root `README.md` if those screens changed.
 
-5. If Demo Mode behavior/seed changed: update `demo_mode/` and any docs that describe those screens. Keep seed data professional.
+5. If Demo Mode behavior/seed changed: update `demo-mode/` and any docs that describe those screens. Keep seed data professional.
 
-6. Never put passwords in `demo_mode/demo.json`. Never invent a fake `live_demo_url`.
+6. Never put passwords in `demo-mode/demo.json`. Never invent a fake `live_demo_url`.
 
-7. **Never let `demo_mode/` enter the main product production build.** Keep root `.vercelignore` excluding `demo_mode`. Do not import demo UI as the production entry. Root Vercel build must stay green for `api/`. Deploy demo as a **separate** Streamlit project (`demo_mode/app.py`). If a change risks pulling demo into the main build, fix excludes in the same session.
+7. **Never let `demo-mode/` enter the main product production build.** Keep root `.vercelignore` excluding `demo-mode`. Do not import demo UI as the production entry. Root Vercel build must stay green for `api/`. Deploy demo as a **separate** Streamlit project (`demo-mode/app.py`). If a change risks pulling demo into the main build, fix excludes in the same session.
 
-8. Keep **`demo_mode/.gitignore`** present and up to date (venv, `__pycache__`, `.env*`, `data/`, Playwright junk). Mirror root ignores into demo_mode.
+8. Keep **`demo-mode/.gitignore`** present and up to date (venv, `__pycache__`, `.env*`, `data/`, Playwright junk). Mirror root ignores into demo-mode.
 
 9. Client-facing docs and root `README.md` stay professional English — no Hinglish, no meme copy, no empty “lorem” UI in screenshots.
 
@@ -45,4 +45,4 @@ This repo ships on the Trends WD portfolio via `demo_mode/` + `Documentation/`.
 
 11. After a full pipeline run (or when asked), keep root `README.md` aligned with product + `Documentation/` (see portfolio Phase 6). Prefer embedding screenshots from `Documentation/images/` via `Documentation/images/filename.png` — do not invent image paths.
 
-Note: This stack uses the Python package folder name `demo_mode/` (underscore). Treat it as the portfolio demo folder equivalent of `demo-mode/`.
+Note: On-disk folder is always `demo-mode/`. Python imports use alias `demo_mode` via `demo_mode_loader` / `demo-mode/register_pkg.py` (hyphens are not valid package names).
